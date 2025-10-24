@@ -50,8 +50,9 @@ def get_gdrive_service():
         msg = f"❌ Gagal otentikasi Google Drive: {e}."
         return None, msg
 
+# [PERUBAHAN] Hapus argumen sector_df
 @st.cache_data(ttl=3600)
-def load_data():
+def load_data(): 
     """Mencari file KSEI, men-download, membersihkan, dan membacanya ke Pandas."""
     service, error_msg = get_gdrive_service()
     if error_msg:
@@ -101,6 +102,8 @@ def load_data():
         df['Total_Local_chg'] = df[local_chg_cols].sum(axis=1)
         df['Total_Foreign_chg'] = df[foreign_chg_cols].sum(axis=1)
 
+        # --- [PERUBAHAN] Logika Merge Sektor Dihapus ---
+
         msg = f"Data KSEI berhasil dimuat (file ID: {file_id})."
         return df, msg, "success"
     
@@ -128,22 +131,11 @@ def calculate_macro_flow(df_filtered_by_year):
     
     return net_flow, cum_flow
 
-@st.cache_data
-def calculate_sector_flow(df_filtered_by_year):
-    """(TAB 2 BARU) Menghitung total aliran dana per sektor."""
-    # Group by Sektor, lalu hitung total flow Lokal dan Asing
-    sector_flow = df_filtered_by_year.groupby('Sector')[['Total_Local_chg', 'Total_Foreign_chg']].sum()
-    
-    # Hitung total flow untuk sorting
-    sector_flow['Total_Flow'] = sector_flow['Total_Local_chg'] + sector_flow['Total_Foreign_chg']
-    sector_flow = sector_flow.sort_values(by='Total_Flow', ascending=False).reset_index()
-    
-    return sector_flow
-    
+# [PERUBAHAN] Fungsi calculate_sector_flow() Dihapus
 
 @st.cache_data
 def get_stock_ownership_state(df, stock_code):
-    """(TAB 3) Mengambil data kepemilikan TERBARU untuk 1 saham."""
+    """(TAB 2 - dulu Tab 3) Mengambil data kepemilikan TERBARU untuk 1 saham."""
     df_stock = df[df['Code'] == stock_code]
     if df_stock.empty:
         return pd.DataFrame()
@@ -170,8 +162,12 @@ def get_stock_ownership_state(df, stock_code):
 st.title("🌊 Dashboard Analisis Aliran Dana KSEI")
 st.caption("Menganalisis rotasi kepemilikan saham (flow) untuk mengambil keputusan.")
 
-df, status_msg, status_level = load_data()
+# --- [PERUBAHAN] File Uploader Sektor Dihapus ---
 
+# Panggil data (tanpa sector_df)
+df, status_msg, status_level = load_data() 
+
+# Tampilkan notifikasi
 if status_level == "success":
     st.toast(status_msg, icon="✅")
 elif status_level == "error":
@@ -183,33 +179,32 @@ elif status_level == "error":
 st.sidebar.header("🎛️ Filter Analisis")
 
 if st.sidebar.button("🔄 Refresh Data (Tarik Ulang dari GDrive)"):
-    st.cache_data.clear()
+    load_data.clear() 
     st.rerun()
 
 if df.empty:
     st.warning("⚠️ Data KSEI belum berhasil dimuat. Dashboard tidak dapat dilanjutkan.")
     st.stop()
 
-# --- [PERUBAHAN] Filter Utama: Ganti rentang tanggal menjadi filter TAHUN ---
+# Filter Utama: TAHUN
 all_years = sorted(df['Date'].dt.year.unique(), reverse=True)
 max_year = df['Date'].dt.year.max()
 
 selected_years = st.sidebar.multiselect(
-    "Pilih Tahun Analisis",
+    "Pilih Tahun Analisis", # Hapus nomor urut
     options=all_years,
-    default=[max_year] # Default ke tahun terbaru
+    default=[max_year] 
 )
 
 if not selected_years:
     st.sidebar.warning("Pilih minimal satu tahun.")
-    selected_years = [max_year] # Fallback
+    selected_years = [max_year]
 
-# Filter DataFrame utama berdasarkan tahun terpilih
 df_filtered_by_year = df[df['Date'].dt.year.isin(selected_years)].copy()
 st.caption(f"Menampilkan data untuk tahun: **{', '.join(map(str, selected_years))}**")
 
-# --- Filter untuk Tab 4 (Screener) ---
-st.sidebar.header("Filter Screener (u/ Tab 4)")
+# Filter untuk Tab 3 (Screener - dulu Tab 4)
+st.sidebar.header("Filter Screener (u/ Tab 3)")
 
 all_stocks = sorted(df_filtered_by_year['Code'].unique())
 selected_stocks = st.sidebar.multiselect(
@@ -238,9 +233,7 @@ min_rotation_vol = st.sidebar.number_input(
     step=100000
 )
 
-# --- Terapkan Filter (hanya untuk screener) ---
-# df_filtered_by_year adalah basis data untuk Tab 1, 2, 3
-# df_screener_filtered adalah data yang lebih spesifik untuk Tab 4
+# Terapkan Filter (hanya untuk screener)
 df_screener_filtered = df_filtered_by_year.copy()
 
 if selected_stocks:
@@ -256,13 +249,13 @@ if min_rotation_vol > 0:
     ]
 
 # ==============================================================================
-#  LAYOUT UTAMA (DENGAN TABS BARU)
+#  LAYOUT UTAMA (DENGAN 3 TABS)
 # ==============================================================================
 
-# [PERUBAHAN] Mengatur ulang Tabs
-tab1, tab2, tab3, tab4 = st.tabs([
+# [PERUBAHAN] Mengatur ulang menjadi 3 Tabs
+tab1, tab2, tab3 = st.tabs([
     "🌊 **Makro (Market)**",
-    "🏭 **Makro (Sektor)**",
+    # Tab Sektor Dihapus
     "📈 **Mikro (Saham)**",
     "🔍 **Screener Rotasi**" 
 ])
@@ -289,7 +282,6 @@ with tab1:
     st.markdown("---")
     st.markdown("**Kategori Investor Terkuat (Net Flow)**")
     
-    # [PERUBAHAN] Sesuai image_272500.png
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**Top 5 Kategori Net Buy**")
@@ -320,107 +312,22 @@ with tab1:
         st.plotly_chart(fig_sell, use_container_width=True)
 
 
-# --- TAB 2: [BARU] RINGKASAN ALIRAN DANA (SEKTOR) ---
+# --- TAB 2: [DULU TAB 3] ANALISIS SAHAM INDIVIDUAL (MIKRO) ---
 with tab2:
-    st.subheader(f"Peta Aliran Dana Sektoral (Tahun: {', '.join(map(str, selected_years))})")
-    
-    df_sector_flow = calculate_sector_flow(df_filtered_by_year)
-    
-    st.markdown("**Aliran Dana Terbesar per Sektor (Lokal vs Asing)**")
-    
-    # Tampilkan Top 5 Sektor (Net Buy) dan Top 5 Sektor (Net Sell)
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("**Top 5 Sektor (Net Buy - Total)**")
-        df_sector_top5 = df_sector_flow.head(5)
-        # Siapkan data untuk stacked bar
-        df_sector_top5_melt = df_sector_top5.melt(id_vars='Sector', value_vars=['Total_Local_chg', 'Total_Foreign_chg'], var_name='Tipe Flow', value_name='Volume')
-        df_sector_top5_melt['Tipe Flow'] = df_sector_top5_melt['Tipe Flow'].str.replace('_chg', ' (Net)')
-        
-        fig_sec_buy = px.bar(
-            df_sector_top5_melt,
-            x='Volume',
-            y='Sector',
-            color='Tipe Flow',
-            orientation='h',
-            title='Top 5 Sektor (Net Buy)',
-            text='Volume'
-        )
-        fig_sec_buy.update_layout(barmode='relative', yaxis={'categoryorder':'total ascending'})
-        fig_sec_buy.update_traces(texttemplate='%{x:,.0f}', textposition='outside')
-        st.plotly_chart(fig_sec_buy, use_container_width=True)
-
-    with col2:
-        st.markdown("**Top 5 Sektor (Net Sell - Total)**")
-        df_sector_bot5 = df_sector_flow.tail(5).sort_values(by='Total_Flow')
-        # Siapkan data untuk stacked bar
-        df_sector_bot5_melt = df_sector_bot5.melt(id_vars='Sector', value_vars=['Total_Local_chg', 'Total_Foreign_chg'], var_name='Tipe Flow', value_name='Volume')
-        df_sector_bot5_melt['Tipe Flow'] = df_sector_bot5_melt['Tipe Flow'].str.replace('_chg', ' (Net)')
-
-        fig_sec_sell = px.bar(
-            df_sector_bot5_melt,
-            x='Volume',
-            y='Sector',
-            color='Tipe Flow',
-            orientation='h',
-            title='Top 5 Sektor (Net Sell)',
-            text='Volume'
-        )
-        fig_sec_sell.update_layout(barmode='relative', yaxis={'categoryorder':'total descending'})
-        fig_sec_sell.update_traces(texttemplate='%{x:,.0f}', textposition='outside')
-        st.plotly_chart(fig_sec_sell, use_container_width=True)
-
-    st.markdown("---")
-    
-    # [PERUBAHAN] Sesuai image_2725d1.png
-    st.subheader("Analisis Mendalam per Sektor")
-    all_sectors = sorted(df_sector_flow['Sector'].unique())
-    selected_sector = st.selectbox(
-        "Pilih Sektor untuk dianalisis:",
-        all_sectors
-    )
-    
-    if selected_sector:
-        data_sektor = df_sector_flow[df_sector_flow['Sector'] == selected_sector].iloc[0]
-        
-        col_m1, col_m2 = st.columns(2)
-        col_m1.metric("Total Aliran Dana Lokal (Net)", f"{data_sektor['Total_Local_chg']:,.0f} Saham")
-        col_m2.metric("Total Aliran Dana Asing (Net)", f"{data_sektor['Total_Foreign_chg']:,.0f} Saham")
-
-        # Tampilkan Pie Chart untuk komposisi flow di sektor itu
-        df_pie_sector = pd.DataFrame({
-            'Tipe': ['Lokal (Net)', 'Asing (Net)'],
-            'Volume': [data_sektor['Total_Local_chg'], data_sektor['Total_Foreign_chg']]
-        })
-        
-        fig_pie_sec = px.pie(
-            df_pie_sector,
-            names='Tipe',
-            values='Volume',
-            title=f"Komposisi Aliran Dana (Net) di Sektor {selected_sector}",
-            hole=0.3
-        )
-        fig_pie_sec.update_traces(textinfo='percent+label', texttemplate='%{label}: %{value:,.0f} (%{percent})')
-        st.plotly_chart(fig_pie_sec, use_container_width=True)
-
-
-# --- TAB 3: ANALISIS SAHAM INDIVIDUAL (MIKRO) ---
-with tab3:
     st.subheader("Bagaimana Aliran Dana di Satu Saham?")
     
-    # Filter 'all_stocks' berdasarkan tahun yang dipilih di sidebar
     stocks_in_period = sorted(df_filtered_by_year['Code'].unique())
     
     stock_to_analyze = st.selectbox(
         "Pilih Saham untuk Analisis Mendalam:",
         stocks_in_period,
-        index=stocks_in_period.index("BBCA") if "BBCA" in stocks_in_period else 0
+        index=stocks_in_period.index("BBCA") if "BBCA" in stocks_in_period else 0,
+        key="selectbox_stock_analysis" # Key tetap sama
     )
     
     if stock_to_analyze:
-        # Gunakan df_filtered_by_year agar filter tahun juga berlaku di sini
         df_stock_filtered = df_filtered_by_year[df_filtered_by_year['Code'] == stock_to_analyze].sort_values('Date')
-        df_state = get_stock_ownership_state(df, stock_to_analyze) # get_stock_ownership_state ambil data terbaru, ini OK
+        df_state = get_stock_ownership_state(df, stock_to_analyze) 
         
         if df_stock_filtered.empty or df_state.empty:
             st.warning(f"Tidak ada data untuk {stock_to_analyze} pada tahun terpilih.")
@@ -490,8 +397,8 @@ with tab3:
                 fig_flow.update_yaxes(title_text="Harga Saham (Rp)", secondary_y=True)
                 st.plotly_chart(fig_flow, use_container_width=True)
 
-# --- TAB 4: SCREENER ROTASI ---
-with tab4:
+# --- TAB 3: [DULU TAB 4] SCREENER ROTASI ---
+with tab3:
     st.subheader("Screener Rotasi Kepemilikan")
     st.info("Gunakan filter di sidebar (Filter Tahun & Filter Screener) untuk mencari rotasi spesifik.")
     
@@ -499,7 +406,6 @@ with tab4:
         'Date', 'Code', 'Top_Buyer', 'Top_Buyer_Vol', 'Top_Seller', 'Top_Seller_Vol',
         'Price', 'Price_Chg %', 'Free Float'
     ]
-    # Gunakan df_screener_filtered yang sudah difilter lengkap
     df_screener = df_screener_filtered[cols_to_display].sort_values(by=['Date', 'Top_Buyer_Vol'], ascending=[False, False])
     
     df_screener_display = df_screener.copy()
