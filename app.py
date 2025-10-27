@@ -50,7 +50,6 @@ def get_gdrive_service():
         msg = f"❌ Gagal otentikasi Google Drive: {e}."
         return None, msg
 
-# [PERUBAHAN] Hapus argumen sector_df
 @st.cache_data(ttl=3600)
 def load_data(): 
     """Mencari file KSEI, men-download, membersihkan, dan membacanya ke Pandas."""
@@ -83,6 +82,12 @@ def load_data():
         df.columns = df.columns.str.strip()
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
         
+        # [PERUBAHAN] Pastikan 'Sector' juga di-strip whitespace jika ada
+        if 'Sector' in df.columns:
+            df['Sector'] = df['Sector'].astype(str).str.strip().fillna('Others')
+        else:
+            df['Sector'] = 'Others' # Fallback jika kolom Sector entah kenapa tidak ada
+
         cols_to_numeric = [
             'Price', 'Price_Chg %', 'Free Float', 'Total_Local', 'Total_Foreign',
             'Top_Buyer_Vol', 'Top_Seller_Vol'
@@ -101,8 +106,6 @@ def load_data():
         
         df['Total_Local_chg'] = df[local_chg_cols].sum(axis=1)
         df['Total_Foreign_chg'] = df[foreign_chg_cols].sum(axis=1)
-
-        # --- [PERUBAHAN] Logika Merge Sektor Dihapus ---
 
         msg = f"Data KSEI berhasil dimuat (file ID: {file_id})."
         return df, msg, "success"
@@ -131,11 +134,30 @@ def calculate_macro_flow(df_filtered_by_year):
     
     return net_flow, cum_flow
 
-# [PERUBAHAN] Fungsi calculate_sector_flow() Dihapus
+# [BARU] Fungsi untuk analisis rotasi sektor
+@st.cache_data
+def calculate_sector_rotation(df_filtered_by_year, selected_category):
+    """(TAB 2 BARU) Menghitung aliran dana bersih kategori tertentu per sektor."""
+    
+    if 'Sector' not in df_filtered_by_year.columns or df_filtered_by_year['Sector'].nunique() <= 1:
+        return pd.DataFrame(), "Data sektor tidak tersedia atau hanya 'Others'. Pastikan kolom 'Sector' ada di file olahan KSEI."
+
+    # Kolom perubahan untuk kategori yang dipilih
+    category_chg_col = f"{selected_category}_chg"
+    
+    if category_chg_col not in df_filtered_by_year.columns:
+        return pd.DataFrame(), f"Kolom '{category_chg_col}' tidak ditemukan dalam data."
+
+    # Group by Sector dan hitung sum dari perubahan kategori yang dipilih
+    sector_category_flow = df_filtered_by_year.groupby('Sector')[category_chg_col].sum().reset_index()
+    sector_category_flow.columns = ['Sector', 'Net Flow (Shares)']
+    sector_category_flow = sector_category_flow.sort_values(by='Net Flow (Shares)', ascending=False)
+    
+    return sector_category_flow, None
 
 @st.cache_data
 def get_stock_ownership_state(df, stock_code):
-    """(TAB 2 - dulu Tab 3) Mengambil data kepemilikan TERBARU untuk 1 saham."""
+    """(TAB 3 - dulu Tab 2) Mengambil data kepemilikan TERBARU untuk 1 saham."""
     df_stock = df[df['Code'] == stock_code]
     if df_stock.empty:
         return pd.DataFrame()
@@ -162,9 +184,7 @@ def get_stock_ownership_state(df, stock_code):
 st.title("🌊 Dashboard Analisis Aliran Dana KSEI")
 st.caption("Menganalisis rotasi kepemilikan saham (flow) untuk mengambil keputusan.")
 
-# --- [PERUBAHAN] File Uploader Sektor Dihapus ---
-
-# Panggil data (tanpa sector_df)
+# Panggil data
 df, status_msg, status_level = load_data() 
 
 # Tampilkan notifikasi
@@ -191,7 +211,7 @@ all_years = sorted(df['Date'].dt.year.unique(), reverse=True)
 max_year = df['Date'].dt.year.max()
 
 selected_years = st.sidebar.multiselect(
-    "Pilih Tahun Analisis", # Hapus nomor urut
+    "Pilih Tahun Analisis", 
     options=all_years,
     default=[max_year] 
 )
@@ -203,8 +223,8 @@ if not selected_years:
 df_filtered_by_year = df[df['Date'].dt.year.isin(selected_years)].copy()
 st.caption(f"Menampilkan data untuk tahun: **{', '.join(map(str, selected_years))}**")
 
-# Filter untuk Tab 3 (Screener - dulu Tab 4)
-st.sidebar.header("Filter Screener (u/ Tab 3)")
+# Filter untuk Tab 4 (Screener)
+st.sidebar.header("Filter Screener (u/ Tab 3)") # Update nomor tab
 
 all_stocks = sorted(df_filtered_by_year['Code'].unique())
 selected_stocks = st.sidebar.multiselect(
@@ -213,16 +233,16 @@ selected_stocks = st.sidebar.multiselect(
     placeholder="Ketik kode saham"
 )
 
-all_categories = sorted(OWNERSHIP_COLS)
+all_categories_base = [col.replace('_chg', '') for col in OWNERSHIP_CHG_COLS]
 selected_buyers = st.sidebar.multiselect(
     "Filter Top Buyer:",
-    all_categories,
+    sorted(all_categories_base),
     placeholder="Cari pergerakan oleh..."
 )
 
 selected_sellers = st.sidebar.multiselect(
     "Filter Top Seller:",
-    all_categories,
+    sorted(all_categories_base),
     placeholder="Cari pergerakan oleh..."
 )
 
@@ -239,8 +259,10 @@ df_screener_filtered = df_filtered_by_year.copy()
 if selected_stocks:
     df_screener_filtered = df_screener_filtered[df_screener_filtered['Code'].isin(selected_stocks)]
 if selected_buyers:
+    # Perlu memastikan kolom Top_Buyer berisi string Kategori tanpa _chg
     df_screener_filtered = df_screener_filtered[df_screener_filtered['Top_Buyer'].isin(selected_buyers)]
 if selected_sellers:
+    # Perlu memastikan kolom Top_Seller berisi string Kategori tanpa _chg
     df_screener_filtered = df_screener_filtered[df_screener_filtered['Top_Seller'].isin(selected_sellers)]
 if min_rotation_vol > 0:
     df_screener_filtered = df_screener_filtered[
@@ -249,13 +271,12 @@ if min_rotation_vol > 0:
     ]
 
 # ==============================================================================
-#  LAYOUT UTAMA (DENGAN 3 TABS)
+#  LAYOUT UTAMA (DENGAN 4 TABS BARU)
 # ==============================================================================
 
-# [PERUBAHAN] Mengatur ulang menjadi 3 Tabs
-tab1, tab2, tab3 = st.tabs([
+tab1, tab2, tab3, tab4 = st.tabs([
     "🌊 **Makro (Market)**",
-    # Tab Sektor Dihapus
+    "📊 **Analisis Sektor (Rotasi)**", # Tab Baru
     "📈 **Mikro (Saham)**",
     "🔍 **Screener Rotasi**" 
 ])
@@ -311,9 +332,73 @@ with tab1:
         fig_sell.update_traces(texttemplate='%{x:,.0f}', textposition='outside', marker_color='red')
         st.plotly_chart(fig_sell, use_container_width=True)
 
-
-# --- TAB 2: [DULU TAB 3] ANALISIS SAHAM INDIVIDUAL (MIKRO) ---
+# --- TAB 2: [BARU] ANALISIS SEKTOR (ROTASI) ---
 with tab2:
+    st.subheader(f"Analisis Rotasi Kategori Investor per Sektor (Tahun: {', '.join(map(str, selected_years))})")
+    
+    if 'Sector' not in df_filtered_by_year.columns or df_filtered_by_year['Sector'].nunique() <= 1:
+        st.warning("Kolom 'Sector' tidak ditemukan atau hanya berisi 'Others'. Pastikan file olahan KSEI memiliki data sektor yang benar.")
+    else:
+        # Pilihan Kategori Investor untuk analisis sektor
+        all_categories_for_sector = sorted([col.replace('_chg', '') for col in OWNERSHIP_CHG_COLS])
+        selected_category_for_sector = st.selectbox(
+            "Pilih Kategori Investor:",
+            all_categories_for_sector,
+            key="sector_category_select"
+        )
+
+        if selected_category_for_sector:
+            df_sector_cat_flow, error_sec_cat = calculate_sector_rotation(df_filtered_by_year, selected_category_for_sector)
+            
+            if error_sec_cat:
+                st.error(error_sec_cat)
+            elif not df_sector_cat_flow.empty:
+                st.markdown(f"**Net Flow ({selected_category_for_sector}) per Sektor**")
+                
+                # Buat dua kolom untuk Top Buy dan Top Sell Sektor
+                col_sec_1, col_sec_2 = st.columns(2)
+                
+                with col_sec_1:
+                    st.markdown(f"**Top 10 Sektor Net Buy oleh {selected_category_for_sector}**")
+                    top_buy_sectors = df_sector_cat_flow[df_sector_cat_flow['Net Flow (Shares)'] > 0].head(10)
+                    if not top_buy_sectors.empty:
+                        fig_sec_buy = px.bar(
+                            top_buy_sectors,
+                            x='Net Flow (Shares)',
+                            y='Sector',
+                            orientation='h',
+                            text='Net Flow (Shares)',
+                            color_discrete_sequence=['green']
+                        )
+                        fig_sec_buy.update_layout(yaxis={'categoryorder':'total ascending'})
+                        fig_sec_buy.update_traces(texttemplate='%{x:,.0f}', textposition='outside')
+                        st.plotly_chart(fig_sec_buy, use_container_width=True)
+                    else:
+                        st.info(f"Tidak ada net buy signifikan oleh {selected_category_for_sector} di sektor manapun.")
+
+                with col_sec_2:
+                    st.markdown(f"**Top 10 Sektor Net Sell oleh {selected_category_for_sector}**")
+                    top_sell_sectors = df_sector_cat_flow[df_sector_cat_flow['Net Flow (Shares)'] < 0].tail(10).sort_values(by='Net Flow (Shares)')
+                    if not top_sell_sectors.empty:
+                        fig_sec_sell = px.bar(
+                            top_sell_sectors,
+                            x='Net Flow (Shares)',
+                            y='Sector',
+                            orientation='h',
+                            text='Net Flow (Shares)',
+                            color_discrete_sequence=['red']
+                        )
+                        fig_sec_sell.update_layout(yaxis={'categoryorder':'total descending'})
+                        fig_sec_sell.update_traces(texttemplate='%{x:,.0f}', textposition='outside')
+                        st.plotly_chart(fig_sec_sell, use_container_width=True)
+                    else:
+                        st.info(f"Tidak ada net sell signifikan oleh {selected_category_for_sector} di sektor manapun.")
+            else:
+                st.info("Tidak ada data aliran dana untuk kategori investor yang dipilih pada tahun ini.")
+
+
+# --- TAB 3: [DULU TAB 2] ANALISIS SAHAM INDIVIDUAL (MIKRO) ---
+with tab3: # Tab berubah dari tab2 menjadi tab3
     st.subheader("Bagaimana Aliran Dana di Satu Saham?")
     
     stocks_in_period = sorted(df_filtered_by_year['Code'].unique())
@@ -322,7 +407,7 @@ with tab2:
         "Pilih Saham untuk Analisis Mendalam:",
         stocks_in_period,
         index=stocks_in_period.index("BBCA") if "BBCA" in stocks_in_period else 0,
-        key="selectbox_stock_analysis" # Key tetap sama
+        key="selectbox_stock_analysis"
     )
     
     if stock_to_analyze:
@@ -334,80 +419,101 @@ with tab2:
         else:
             latest_price = df_stock_filtered.iloc[-1]['Price']
             free_float = df_stock_filtered.iloc[-1]['Free Float']
+            stock_sector = df_stock_filtered.iloc[-1]['Sector'] # Ambil sektor
             
-            st.markdown(f"**Analisis: {stock_to_analyze}**")
-            col1, col2 = st.columns(2)
+            st.markdown(f"**Analisis: {stock_to_analyze} ({stock_sector})**")
+            col1, col2, col3 = st.columns(3) # Tambah kolom untuk Sektor
             col1.metric("Harga Terakhir", f"Rp {latest_price:,.0f}" if pd.notna(latest_price) else "N/A")
             col2.metric("Free Float Saham", f"{free_float:.2f}%" if pd.notna(free_float) else "N/A")
+            col3.metric("Sektor", stock_sector if pd.notna(stock_sector) else "N/A")
 
             st.markdown("---")
             
-            c1, c2 = st.columns([1, 2])
+            # [PERUBAHAN] Mengubah Treemap menjadi Pie Charts
+            st.markdown("**Peta Kepemilikan (Terbaru)**")
             
-            with c1:
-                st.markdown("**Peta Kepemilikan (Terbaru)**")
-                fig_pie = px.treemap(
-                    df_state,
-                    path=[px.Constant("Semua"), 'Tipe', 'Kategori'],
-                    values='Jumlah Saham',
-                    title=f'Komposisi Pemegang Saham {stock_to_analyze} (Terbaru)',
-                    hover_data={'Persentase': ':.2f%'}
-                )
-                fig_pie.update_traces(textinfo="label+percent root")
-                st.plotly_chart(fig_pie, use_container_width=True)
+            df_local_ownership = df_state[df_state['Tipe'] == 'Local'].sort_values('Jumlah Saham', ascending=False)
+            df_foreign_ownership = df_state[df_state['Tipe'] == 'Foreign'].sort_values('Jumlah Saham', ascending=False)
+            
+            pcol1, pcol2 = st.columns(2)
+            with pcol1:
+                if not df_local_ownership.empty and df_local_ownership['Jumlah Saham'].sum() > 0:
+                    fig_pie_local = px.pie(
+                        df_local_ownership,
+                        names='Kategori',
+                        values='Jumlah Saham',
+                        title=f'Komposisi Kepemilikan Lokal {stock_to_analyze}',
+                        hole=0.3
+                    )
+                    fig_pie_local.update_traces(textinfo='percent+label', texttemplate='%{label}: %{value:,.0f} (%{percent})')
+                    st.plotly_chart(fig_pie_local, use_container_width=True)
+                else:
+                    st.info("Tidak ada data kepemilikan lokal.")
+            
+            with pcol2:
+                if not df_foreign_ownership.empty and df_foreign_ownership['Jumlah Saham'].sum() > 0:
+                    fig_pie_foreign = px.pie(
+                        df_foreign_ownership,
+                        names='Kategori',
+                        values='Jumlah Saham',
+                        title=f'Komposisi Kepemilikan Asing {stock_to_analyze}',
+                        hole=0.3
+                    )
+                    fig_pie_foreign.update_traces(textinfo='percent+label', texttemplate='%{label}: %{value:,.0f} (%{percent})')
+                    st.plotly_chart(fig_pie_foreign, use_container_width=True)
+                else:
+                    st.info("Tidak ada data kepemilikan asing.")
 
-            with c2:
-                st.markdown("**Rotasi Kepemilikan vs Harga**")
-                
-                fig_flow = make_subplots(specs=[[{"secondary_y": True}]])
-                
-                fig_flow.add_trace(go.Bar(
-                    x=df_stock_filtered['Date'],
-                    y=df_stock_filtered['Top_Buyer_Vol'],
-                    name='Top Buyer (Vol)',
-                    marker_color='green',
-                    customdata=df_stock_filtered['Top_Buyer'],
-                    hovertemplate='Tanggal: %{x}<br>Buyer: %{customdata}<br>Vol: %{y:,.0f}<extra></extra>'
-                ), secondary_y=False)
-                
-                fig_flow.add_trace(go.Bar(
-                    x=df_stock_filtered['Date'],
-                    y=df_stock_filtered['Top_Seller_Vol'],
-                    name='Top Seller (Vol)',
-                    marker_color='red',
-                    customdata=df_stock_filtered['Top_Seller'],
-                    hovertemplate='Tanggal: %{x}<br>Seller: %{customdata}<br>Vol: %{y:,.0f}<extra></extra>'
-                ), secondary_y=False)
-                
-                fig_flow.add_trace(go.Scatter(
-                    x=df_stock_filtered['Date'],
-                    y=df_stock_filtered['Price'],
-                    name='Harga Saham (Rp)',
-                    line=dict(color='blue'),
-                    hovertemplate='Tanggal: %{x}<br>Harga: %{y:,.0f}<extra></extra>'
-                ), secondary_y=True)
+            st.markdown("---")
+            st.markdown("**Detail Rotasi Kepemilikan per Periode**")
+            # [PERUBAHAN] Ganti Chart Rotasi dengan Tabel Detail
+            cols_to_display_detail = [
+                'Date', 'Top_Buyer', 'Top_Buyer_Vol', 'Top_Seller', 'Top_Seller_Vol',
+                'Price', 'Price_Chg %'
+            ]
+            
+            df_stock_detail = df_stock_filtered[cols_to_display_detail].copy()
+            
+            # Format angka untuk tampilan
+            df_stock_detail['Top_Buyer_Vol'] = df_stock_detail['Top_Buyer_Vol'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else 'N/A')
+            df_stock_detail['Top_Seller_Vol'] = df_stock_detail['Top_Seller_Vol'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else 'N/A')
+            df_stock_detail['Price'] = df_stock_detail['Price'].apply(lambda x: f"Rp {x:,.0f}" if pd.notna(x) else 'N/A')
+            
+            st.dataframe(
+                df_stock_detail,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Date": st.column_config.DateColumn("Tanggal", format="DD-MM-YYYY"),
+                    "Top_Buyer": st.column_config.TextColumn("Top Buyer"),
+                    "Top_Buyer_Vol": st.column_config.TextColumn("Vol Buyer"),
+                    "Top_Seller": st.column_config.TextColumn("Top Seller"),
+                    "Top_Seller_Vol": st.column_config.TextColumn("Vol Seller"),
+                    "Price": st.column_config.TextColumn("Harga"),
+                    "Price_Chg %": st.column_config.NumberColumn("Change %", format="%.2f%%"),
+                }
+            )
 
-                fig_flow.update_layout(
-                    title=f'Aliran Dana (Buyer/Seller) vs Pergerakan Harga {stock_to_analyze}',
-                    barmode='relative',
-                    hovermode="x unified",
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-                )
-                fig_flow.update_yaxes(title_text="Volume Rotasi (Shares)", secondary_y=False)
-                fig_flow.update_yaxes(title_text="Harga Saham (Rp)", secondary_y=True)
-                st.plotly_chart(fig_flow, use_container_width=True)
 
-# --- TAB 3: [DULU TAB 4] SCREENER ROTASI ---
-with tab3:
+# --- TAB 4: [DULU TAB 3] SCREENER ROTASI ---
+with tab4: # Tab berubah dari tab3 menjadi tab4
     st.subheader("Screener Rotasi Kepemilikan")
     st.info("Gunakan filter di sidebar (Filter Tahun & Filter Screener) untuk mencari rotasi spesifik.")
     
     cols_to_display = [
-        'Date', 'Code', 'Top_Buyer', 'Top_Buyer_Vol', 'Top_Seller', 'Top_Seller_Vol',
+        'Date', 'Code', 'Sector', 'Top_Buyer', 'Top_Buyer_Vol', 'Top_Seller', 'Top_Seller_Vol',
         'Price', 'Price_Chg %', 'Free Float'
     ]
-    df_screener = df_screener_filtered[cols_to_display].sort_values(by=['Date', 'Top_Buyer_Vol'], ascending=[False, False])
-    
+    # Pastikan kolom 'Sector' ada sebelum diakses
+    if 'Sector' in df_screener_filtered.columns:
+        df_screener = df_screener_filtered[cols_to_display].sort_values(by=['Date', 'Top_Buyer_Vol'], ascending=[False, False])
+    else:
+        # Jika 'Sector' tidak ada, hapus dari cols_to_display dan berikan warning
+        st.warning("Kolom 'Sector' tidak ditemukan untuk screener. Pastikan file olahan KSEI memiliki data sektor.")
+        cols_to_display.remove('Sector')
+        df_screener = df_screener_filtered[cols_to_display].sort_values(by=['Date', 'Top_Buyer_Vol'], ascending=[False, False])
+
+
     df_screener_display = df_screener.copy()
     
     df_screener_display['Top_Buyer_Vol'] = df_screener_display['Top_Buyer_Vol'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else 'N/A')
@@ -421,6 +527,7 @@ with tab3:
         column_config={
             "Date": st.column_config.DateColumn("Tanggal", format="DD-MM-YYYY"),
             "Code": st.column_config.TextColumn("Saham"),
+            "Sector": st.column_config.TextColumn("Sektor"), # Tambahkan kolom Sektor
             "Top_Buyer": st.column_config.TextColumn("Top Buyer"),
             "Top_Buyer_Vol": st.column_config.TextColumn("Vol Buyer"),
             "Top_Seller": st.column_config.TextColumn("Top Seller"),
