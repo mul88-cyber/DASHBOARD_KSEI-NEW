@@ -87,24 +87,22 @@ def load_data():
         else:
             df['Sector'] = 'Others'
 
-        # [PERUBAHAN] Pastikan Sec. Num juga dibaca
         cols_to_numeric = [
             'Price', 'Price_Chg %', 'Free Float', 'Total_Local', 'Total_Foreign',
-            'Top_Buyer_Vol', 'Top_Seller_Vol', 'Sec. Num' # Tambah Sec. Num
+            'Top_Buyer_Vol', 'Top_Seller_Vol', 'Sec. Num'
         ] + OWNERSHIP_COLS + OWNERSHIP_CHG_COLS
 
         for col in cols_to_numeric:
             if col in df.columns:
                 cleaned_col = df[col].astype(str).str.strip()
                 cleaned_col = cleaned_col.str.replace(',', '', regex=False)
-                # Handle potentially missing Sec. Num
                 if col == 'Sec. Num' and cleaned_col.eq('').any():
-                    st.warning(f"Kolom 'Sec. Num' memiliki nilai kosong, akan diisi 0.", icon="⚠️")
+                    # Tidak perlu warning, cukup isi 0
+                    pass
                 df[col] = pd.to_numeric(cleaned_col, errors='coerce').fillna(0)
             elif col == 'Sec. Num':
-                 # Jika kolom Sec. Num tidak ada sama sekali
                  st.error("Kolom 'Sec. Num' tidak ditemukan di file CSV. Pie chart Non-Free Float tidak dapat dibuat.", icon="🚨")
-                 df['Sec. Num'] = 0 # Buat kolom dummy
+                 df['Sec. Num'] = 0
 
         df = df.dropna(subset=['Date', 'Code'])
 
@@ -114,7 +112,6 @@ def load_data():
         df['Total_Local_chg'] = df[local_chg_cols].sum(axis=1)
         df['Total_Foreign_chg'] = df[foreign_chg_cols].sum(axis=1)
         df['Total_chg'] = df['Total_Local_chg'] + df['Total_Foreign_chg']
-
 
         msg = f"Data KSEI berhasil dimuat (file ID: {file_id})."
         return df, msg, "success"
@@ -164,19 +161,17 @@ def calculate_monthly_sector_flow(df_filtered_by_year):
     monthly_sector_flow.columns = ['Sector', 'Month', 'Net Flow (Shares)']
     return monthly_sector_flow, None
 
-# [PERUBAHAN] Fungsi ini sekarang hanya untuk Pie Charts
 @st.cache_data
 def get_stock_ownership_state(df, stock_code):
     """(TAB 3 Pie) Mengambil data kepemilikan TERBARU untuk 1 saham."""
     df_stock = df[df['Code'] == stock_code]
     if df_stock.empty:
-        return pd.DataFrame(), pd.Series(dtype='object') # Kembalikan juga data baris terakhir
+        return pd.DataFrame(), pd.Series(dtype='object')
 
     latest_row = df_stock.sort_values('Date').iloc[-1]
     df_state = latest_row[OWNERSHIP_COLS].reset_index()
     df_state.columns = ['Kategori', 'Jumlah Saham']
 
-    # Hitung total untuk persentase Pie 1
     total_shares_pie1 = df_state['Jumlah Saham'].sum()
     if total_shares_pie1 > 0:
         df_state['Persentase'] = (df_state['Jumlah Saham'] / total_shares_pie1) * 100
@@ -185,44 +180,69 @@ def get_stock_ownership_state(df, stock_code):
 
     return df_state.sort_values(by='Jumlah Saham', ascending=False), latest_row
 
-# [BARU] Fungsi untuk tabel detail bulanan di Tab 3
 @st.cache_data
 def calculate_monthly_shareholder_change_table(df_stock_filtered):
     """(TAB 3 Table) Menghitung perubahan bulanan per kategori shareholder."""
     if df_stock_filtered.empty:
         return pd.DataFrame()
-
-    # Set index ke Date untuk resampling bulanan
     df_temp = df_stock_filtered.set_index('Date')
-
-    # Resample per bulan (Month Start 'MS'), group by Kategori (kolom _chg), sum
     monthly_changes = df_temp.resample('MS')[OWNERSHIP_CHG_COLS].sum()
-
-    # Rename kolom _chg menjadi nama kategori dasar
     monthly_changes.columns = [col.replace('_chg', '') for col in OWNERSHIP_CHG_COLS]
-
-    # Urutkan berdasarkan bulan terbaru di atas
     monthly_changes = monthly_changes.sort_index(ascending=False)
-
-    # Reset index agar 'Month' jadi kolom
     monthly_changes = monthly_changes.reset_index()
     monthly_changes.rename(columns={'Date': 'Month'}, inplace=True)
-
     return monthly_changes
 
-# [BARU] Fungsi untuk highlight tabel bulanan
+# [BARU] Fungsi untuk line chart histori kepemilikan (TAB 3)
+@st.cache_data
+def calculate_historical_ownership_pct(df_stock_filtered):
+    """(TAB 3 Line Chart) Menghitung persentase kepemilikan historis per kategori."""
+    if df_stock_filtered.empty or not all(col in df_stock_filtered.columns for col in OWNERSHIP_COLS):
+        return pd.DataFrame()
+
+    df_hist = df_stock_filtered[['Date'] + OWNERSHIP_COLS].copy()
+    # Hitung total saham per tanggal
+    df_hist['Total_Shares_Calc'] = df_hist[OWNERSHIP_COLS].sum(axis=1)
+
+    # Hitung persentase untuk setiap kategori
+    for col in OWNERSHIP_COLS:
+        # Handle jika Total_Shares_Calc == 0
+        df_hist[f'{col}_pct'] = np.where(df_hist['Total_Shares_Calc'] > 0, (df_hist[col] / df_hist['Total_Shares_Calc']) * 100, 0)
+
+    # Pilih kolom persentase saja
+    pct_cols = [f'{col}_pct' for col in OWNERSHIP_COLS]
+    df_hist_pct = df_hist[['Date'] + pct_cols]
+
+    # Melt untuk format plotting
+    df_melted = df_hist_pct.melt(id_vars=['Date'], var_name='Kategori_pct', value_name='Persentase')
+    df_melted['Kategori'] = df_melted['Kategori_pct'].str.replace('_pct', '')
+
+    # Filter kategori yang selalu 0%
+    total_pct_per_cat = df_melted.groupby('Kategori')['Persentase'].sum()
+    active_categories = total_pct_per_cat[total_pct_per_cat > 0.01].index # Toleransi kecil
+    df_melted = df_melted[df_melted['Kategori'].isin(active_categories)]
+
+
+    return df_melted[['Date', 'Kategori', 'Persentase']]
+
+
 def highlight_max_min(s):
     '''Highlight maximum (positive) in green and minimum (negative) in red.'''
-    is_max = s == s[s > 0].max() # Max dari nilai positif
-    is_min = s == s[s < 0].min() # Min dari nilai negatif
+    # Pastikan input adalah numerik
+    s_numeric = pd.to_numeric(s, errors='coerce')
+    max_val = s_numeric[s_numeric > 0].max()
+    min_val = s_numeric[s_numeric < 0].min()
     colors = []
-    for v_max, v_min in zip(is_max, is_min):
-        if v_max:
-            colors.append('background-color: lightgreen')
-        elif v_min:
-            colors.append('background-color: lightcoral')
+    for val in s_numeric:
+        if pd.notna(val):
+            if val == max_val and val > 0:
+                colors.append('background-color: lightgreen')
+            elif val == min_val and val < 0:
+                colors.append('background-color: lightcoral')
+            else:
+                colors.append('')
         else:
-            colors.append('')
+             colors.append('')
     return colors
 
 
@@ -326,6 +346,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 ])
 
 # --- TAB 1: RINGKASAN ALIRAN DANA (MARKET) ---
+# ... (Kode Tab 1 tidak berubah) ...
 with tab1:
     st.subheader(f"Peta Aliran Dana Market (Tahun: {', '.join(map(str, selected_years))})")
     df_net_flow, df_cum_flow = calculate_macro_flow(df_filtered_by_year)
@@ -353,6 +374,7 @@ with tab1:
         st.plotly_chart(fig_sell, use_container_width=True)
 
 # --- TAB 2: ANALISIS SEKTOR (ROTASI) ---
+# ... (Kode Tab 2 tidak berubah) ...
 with tab2:
     st.subheader(f"Analisis Rotasi Kategori Investor per Sektor (Tahun: {', '.join(map(str, selected_years))})")
     if 'Sector' not in df_filtered_by_year.columns or df_filtered_by_year['Sector'].nunique() <= 1:
@@ -386,25 +408,23 @@ with tab2:
                     else: st.info(f"Tidak ada net sell signifikan.")
             else: st.info("Tidak ada data aliran dana.")
 
-# --- TAB 3: [PERUBAHAN] ANALISA INDIVIDUAL ---
-with tab3: # Nama Tab diubah
+# --- TAB 3: ANALISA INDIVIDUAL ---
+with tab3:
     st.subheader("Bagaimana Aliran Dana di Satu Saham?")
     stocks_in_period = sorted(df_filtered_by_year['Code'].unique())
     stock_to_analyze = st.selectbox("Pilih Saham:", stocks_in_period, index=stocks_in_period.index("BBCA") if "BBCA" in stocks_in_period else 0, key="selectbox_stock_analysis")
 
     if stock_to_analyze:
         df_stock_filtered = df_filtered_by_year[df_filtered_by_year['Code'] == stock_to_analyze].sort_values('Date')
-        # Panggil fungsi state (sekarang return 2 hal)
         df_state, latest_row_data = get_stock_ownership_state(df, stock_to_analyze)
 
         if df_stock_filtered.empty or df_state.empty:
             st.warning(f"Tidak ada data untuk {stock_to_analyze} pada tahun terpilih.")
         else:
-            # Ambil data dari latest_row_data
             latest_price = latest_row_data.get('Price', np.nan)
             free_float = latest_row_data.get('Free Float', np.nan)
             stock_sector = latest_row_data.get('Sector', 'N/A')
-            sec_num = latest_row_data.get('Sec. Num', 0) # Ambil Sec Num
+            sec_num = latest_row_data.get('Sec. Num', 0)
             total_local = latest_row_data.get('Total_Local', 0)
             total_foreign = latest_row_data.get('Total_Foreign', 0)
 
@@ -415,88 +435,87 @@ with tab3: # Nama Tab diubah
             col3.metric("Sektor", stock_sector if pd.notna(stock_sector) else "N/A")
             st.markdown("---")
 
-            st.markdown("**Peta Kepemilikan (Terbaru)**")
-            pcol1, pcol2 = st.columns(2)
+            # --- [PERUBAHAN] Layout Pie Charts & Line Chart ---
+            st.markdown("**Peta Kepemilikan (Terbaru) & Tren Historis**")
+            # Bagi layout menjadi 3 kolom: Pie1, Pie2, Line
+            pcol1, pcol2, pcol3 = st.columns([1, 1, 2]) # Kolom ke-3 lebih lebar
+
             with pcol1:
-                # [PERUBAHAN] Pie Chart 1: All Categories
+                # Pie Chart 1: All Categories
                 if not df_state.empty and df_state['Jumlah Saham'].sum() > 0:
                     fig_pie_all = px.pie(
-                        df_state,
-                        names='Kategori',
-                        values='Jumlah Saham',
-                        title=f'Komposisi Semua Pemegang Saham {stock_to_analyze}',
-                        hole=0.3
-                    )
-                    # Sort=False penting agar urutan sesuai data (terbesar ke terkecil)
-                    fig_pie_all.update_traces(textinfo='percent+label', texttemplate='%{label}: %{value:,.0f} (%{percent})', sort=False)
+                        df_state, names='Kategori', values='Jumlah Saham',
+                        title=f'Komposisi Semua Holder', hole=0.3 )
+                    fig_pie_all.update_traces(textinfo='percent+label', texttemplate='%{label}(%{percent})', sort=False, showlegend=False) # Hide legend
+                    fig_pie_all.update_layout(margin=dict(l=20, r=20, t=30, b=20)) # Margin kecil
                     st.plotly_chart(fig_pie_all, use_container_width=True)
-                else:
-                    st.info("Tidak ada data kepemilikan.")
+                else: st.info("No ownership data.")
 
             with pcol2:
-                # [PERUBAHAN] Pie Chart 2: Local / Foreign / Non-FF
+                # Pie Chart 2: Local / Foreign / Non-FF
                 if sec_num > 0:
-                    non_free_float_val = sec_num - total_local - total_foreign
-                    # Pastikan tidak negatif (karena pembulatan/error data)
-                    non_free_float_val = max(0, non_free_float_val)
-
-                    df_pie_dist = pd.DataFrame({
-                        'Tipe': ['Lokal', 'Asing', 'Non Publik (Est)'],
-                        'Jumlah Saham': [total_local, total_foreign, non_free_float_val]
-                    })
-                    # Filter tipe yang jumlahnya 0
+                    non_free_float_val = max(0, sec_num - total_local - total_foreign)
+                    df_pie_dist = pd.DataFrame({'Tipe': ['Lokal', 'Asing', 'Non Publik'],
+                                                'Jumlah Saham': [total_local, total_foreign, non_free_float_val]})
                     df_pie_dist = df_pie_dist[df_pie_dist['Jumlah Saham'] > 0]
-
                     if not df_pie_dist.empty:
                         fig_pie_dist = px.pie(
-                            df_pie_dist,
-                            names='Tipe',
-                            values='Jumlah Saham',
-                            title=f'Distribusi Umum Saham {stock_to_analyze}',
-                            hole=0.3
-                        )
-                        fig_pie_dist.update_traces(textinfo='percent+label', texttemplate='%{label}: %{value:,.0f} (%{percent})', sort=False)
+                            df_pie_dist, names='Tipe', values='Jumlah Saham',
+                            title=f'Distribusi Umum', hole=0.3 )
+                        fig_pie_dist.update_traces(textinfo='percent+label', texttemplate='%{label}(%{percent})', sort=False, showlegend=False) # Hide legend
+                        fig_pie_dist.update_layout(margin=dict(l=20, r=20, t=30, b=20)) # Margin kecil
                         st.plotly_chart(fig_pie_dist, use_container_width=True)
-                    else:
-                        st.info("Data distribusi umum tidak tersedia.")
+                    else: st.info("No distribution data.")
+                else: st.warning("'Sec. Num' invalid.")
+
+            with pcol3:
+                # [BARU] Line Chart Historical Ownership %
+                st.markdown("**Tren Kepemilikan Historis (%)**")
+                df_hist_pct = calculate_historical_ownership_pct(df_stock_filtered)
+                if not df_hist_pct.empty:
+                    fig_hist_pct = px.line(
+                        df_hist_pct,
+                        x='Date',
+                        y='Persentase',
+                        color='Kategori',
+                        title=f'Tren Persentase Kepemilikan {stock_to_analyze}',
+                        labels={'Date': 'Tanggal', 'Persentase': '% Kepemilikan'}
+                    )
+                    fig_hist_pct.update_layout(hovermode='x unified', yaxis_ticksuffix='%')
+                    fig_hist_pct.update_traces(hovertemplate='Tgl: %{x|%d%b%y}<br>%{fullData.name}: %{y:.2f}%<extra></extra>')
+                    st.plotly_chart(fig_hist_pct, use_container_width=True)
                 else:
-                    st.warning("Kolom 'Sec. Num' tidak valid atau 0. Pie Chart Non-Free Float tidak dapat dibuat.")
+                    st.warning("Tidak ada data historis kepemilikan untuk ditampilkan.")
+
 
             st.markdown("---")
-            # [PERUBAHAN] Chart Rotasi -> Tabel Detail Bulanan
+            # [PERUBAHAN] Tabel Detail Bulanan (Layout tidak berubah)
             st.markdown("**Detail Rotasi Kepemilikan per Bulan**")
             df_monthly_change = calculate_monthly_shareholder_change_table(df_stock_filtered)
 
             if not df_monthly_change.empty:
-                # Siapkan tabel untuk ditampilkan
                 df_display_monthly = df_monthly_change.copy()
-                # Format bulan
                 df_display_monthly['Month'] = df_display_monthly['Month'].dt.strftime('%b %Y')
-
-                # Pilih kolom kategori saja untuk styling
                 numeric_cols_to_style = df_display_monthly.columns.drop('Month')
 
-                # Tampilkan tabel dengan highlight
+                # Tampilkan tabel (Pastikan use_container_width=True)
                 st.dataframe(
-                    df_display_monthly.style.apply(highlight_max_min, subset=numeric_cols_to_style, axis=1) # Terapkan highlight per baris
-                                          .format("{:,.0f}", subset=numeric_cols_to_style, na_rep='0'), # Format angka
-                    use_container_width=True,
-                    # column_config bisa ditambahkan jika perlu rename header
+                    df_display_monthly.style.apply(highlight_max_min, subset=numeric_cols_to_style, axis=1)
+                                          .format("{:,.0f}", subset=numeric_cols_to_style, na_rep='0'),
+                    use_container_width=True, # <-- PENTING UNTUK FULL WIDTH
+                    hide_index=True
                 )
             else:
                 st.warning("Tidak ada data perubahan bulanan untuk ditampilkan.")
 
 
 # --- TAB 4: SCREENER ROTASI ---
-with tab4: # Nomor Tab diupdate
+with tab4:
     st.subheader("Screener Rotasi Kepemilikan")
-
-    # [PERUBAHAN] Chart Aliran Sektor Bulanan
+    # ... (Kode Chart Aliran Sektor Bulanan tidak berubah) ...
     st.markdown("**Tren Aliran Dana Bersih Bulanan per Sektor**")
     df_monthly_sec_flow, error_monthly_sec = calculate_monthly_sector_flow(df_filtered_by_year)
-
-    if error_monthly_sec:
-        st.warning(error_monthly_sec)
+    if error_monthly_sec: st.warning(error_monthly_sec)
     elif not df_monthly_sec_flow.empty:
         total_abs_flow = df_monthly_sec_flow.groupby('Sector')['Net Flow (Shares)'].apply(lambda x: x.abs().sum()).nlargest(10).index
         df_monthly_sec_flow_top = df_monthly_sec_flow[df_monthly_sec_flow['Sector'].isin(total_abs_flow)]
@@ -504,42 +523,26 @@ with tab4: # Nomor Tab diupdate
         fig_monthly_sec.update_layout(hovermode='x unified')
         fig_monthly_sec.update_traces(hovertemplate='Bulan: %{x|%b %Y}<br>Sektor: %{fullData.name}<br>Flow: %{y:,.0f}<extra></extra>')
         st.plotly_chart(fig_monthly_sec, use_container_width=True)
-    else:
-        st.info("Tidak ada data aliran dana sektoral bulanan untuk ditampilkan.")
+    else: st.info("Tidak ada data aliran dana sektoral bulanan.")
 
     st.markdown("---")
     st.info("Gunakan filter di sidebar (Filter Tahun & Filter Screener) untuk mencari rotasi spesifik di tabel bawah.")
-
     cols_to_display = ['Date', 'Code', 'Sector', 'Top_Buyer', 'Top_Buyer_Vol', 'Top_Seller', 'Top_Seller_Vol', 'Price', 'Price_Chg %', 'Free Float']
-    # Cek kolom Sector sebelum diakses
-    use_cols = cols_to_display[:] # Copy list
+    use_cols = cols_to_display[:]
     if 'Sector' not in df_screener_filtered.columns:
         st.warning("Kolom 'Sector' tidak ditemukan untuk screener.")
         use_cols.remove('Sector')
-
     df_screener = df_screener_filtered[use_cols].sort_values(by=['Date', 'Top_Buyer_Vol'], ascending=[False, False])
     df_screener_display = df_screener.copy()
-
-    # Format manual
     df_screener_display['Top_Buyer_Vol'] = df_screener_display['Top_Buyer_Vol'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else 'N/A')
     df_screener_display['Top_Seller_Vol'] = df_screener_display['Top_Seller_Vol'].apply(lambda x: f"{x:,.0f}" if pd.notna(x) else 'N/A')
     df_screener_display['Price'] = df_screener_display['Price'].apply(lambda x: f"Rp {x:,.0f}" if pd.notna(x) else 'N/A')
-
-    # Siapkan column_config
     col_config_screener = {
-        "Date": st.column_config.DateColumn("Tanggal", format="DD-MM-YYYY"),
-        "Code": st.column_config.TextColumn("Saham"),
-        "Top_Buyer": st.column_config.TextColumn("Top Buyer"),
-        "Top_Buyer_Vol": st.column_config.TextColumn("Vol Buyer"),
-        "Top_Seller": st.column_config.TextColumn("Top Seller"),
-        "Top_Seller_Vol": st.column_config.TextColumn("Vol Seller"),
-        "Price": st.column_config.TextColumn("Harga"),
-        "Price_Chg %": st.column_config.NumberColumn("Change %", format="%.2f%%"),
+        "Date": st.column_config.DateColumn("Tanggal", format="DD-MM-YYYY"), "Code": "Saham",
+        "Top_Buyer": "Top Buyer", "Top_Buyer_Vol": "Vol Buyer", "Top_Seller": "Top Seller", "Top_Seller_Vol": "Vol Seller",
+        "Price": "Harga", "Price_Chg %": st.column_config.NumberColumn("Change %", format="%.2f%%"),
         "Free Float": st.column_config.NumberColumn("Free Float %", format="%.2f%%")
     }
-    # Tambahkan config Sector jika ada
-    if 'Sector' in use_cols:
-        col_config_screener["Sector"] = st.column_config.TextColumn("Sektor")
-
+    if 'Sector' in use_cols: col_config_screener["Sector"] = "Sektor"
     st.dataframe(df_screener_display, use_container_width=True, hide_index=True, column_config=col_config_screener)
 
