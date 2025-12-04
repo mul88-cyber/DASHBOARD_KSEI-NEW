@@ -293,7 +293,7 @@ st.sidebar.info(f"📅 Data Range: {df['Date'].dt.date.min()} s/d {df['Date'].dt
 st.sidebar.header("Filter Screener (Tab 4)")
 min_rotation_value = st.sidebar.number_input(
     "Min. Value Rotasi (Rp)", 
-    value=5_000_000_000, 
+    value=1_000_000_000, # Default turunkan ke 1M agar data pasti muncul dulu
     step=1_000_000_000, 
     format="%d"
 )
@@ -375,7 +375,6 @@ with tab3:
             st.markdown("**Perubahan Bulanan (Volume Lembar)**")
             df_m_chg = calculate_monthly_change_table(df_stock)
             
-            # Format tabel dengan koma ribuan menggunakan Pandas Styler
             st.dataframe(
                 df_m_chg.style
                 .apply(highlight_max_min, subset=OWNERSHIP_CHG_COLS, axis=1)
@@ -384,7 +383,7 @@ with tab3:
                 hide_index=True
             )
 
-# --- TAB 4: SCREENER ---
+# --- TAB 4: SCREENER (FIXED) ---
 with tab4:
     st.subheader("Screener Big Rotation")
     df_monthly_sec, _ = calculate_monthly_sector_flow(df)
@@ -403,20 +402,25 @@ with tab4:
     df_scr = df_scr[mask].sort_values('Top_Buyer_Value_Rp', ascending=False)
     
     disp_cols = ['Date', 'Code', 'Top_Buyer', 'Top_Buyer_Value_Rp', 'Top_Seller', 'Top_Seller_Value_Rp', 'Price']
-    
-    # Tampilkan Dataframe dengan Format Ribuan (Safe Mode: NumberColumn)
+    df_display_scr = df_scr[disp_cols].copy()
+
+    # [FIX] Safety Cast: Paksa ke Float dan Fillna agar column_config tidak error
+    cols_to_fix = ['Top_Buyer_Value_Rp', 'Top_Seller_Value_Rp', 'Price']
+    for c in cols_to_fix:
+        df_display_scr[c] = pd.to_numeric(df_display_scr[c], errors='coerce').fillna(0)
+
     st.dataframe(
-        df_scr[disp_cols],
+        df_display_scr,
         column_config={
             "Date": st.column_config.DateColumn("Bulan", format="MM-YYYY"),
-            "Top_Buyer_Value_Rp": st.column_config.NumberColumn("Value Buyer", format="Rp %.0f"), # %.0f otomatis kasih koma di UI
+            "Top_Buyer_Value_Rp": st.column_config.NumberColumn("Value Buyer", format="Rp %.0f"),
             "Top_Seller_Value_Rp": st.column_config.NumberColumn("Value Seller", format="Rp %.0f"),
             "Price": st.column_config.NumberColumn("Harga", format="Rp %.0f")
         },
         use_container_width=True, hide_index=True
     )
 
-# --- TAB 5: SINYAL POTENSIAL (NEW) ---
+# --- TAB 5: SINYAL POTENSIAL (FIXED) ---
 with tab5:
     st.subheader("💎 Radar Saham Potensial (Smart Money Flow)")
     st.info("Mendeteksi akumulasi Smart Money (Asing+Institusi) vs Distribusi Ritel (Local ID).")
@@ -430,14 +434,18 @@ with tab5:
     df_sig = calculate_smart_money_signals(df, window_periods=lookback)
     
     if not df_sig.empty:
-        df_accum = df_sig[df_sig['Smart Money Flow (Rp)'] >= min_acc]
+        df_accum = df_sig[df_sig['Smart Money Flow (Rp)'] >= min_acc].copy()
         
         with col_s2:
             st.metric("Saham Terdeteksi", f"{len(df_accum)} Emitter")
             
         st.markdown("### 🏆 Top Picks: Big Accumulation")
         
-        # Format Dataframe agar ada Koma Ribuan
+        # [FIX] Safety Cast: Paksa ke Float dan Fillna
+        cols_to_fix_sig = ['Price', 'Price Chg (Window)%', 'Smart Money Flow (Rp)', 'Retail Flow (Rp)']
+        for c in cols_to_fix_sig:
+            df_accum[c] = pd.to_numeric(df_accum[c], errors='coerce').fillna(0)
+
         st.dataframe(
             df_accum[['Code', 'Signal', 'Price', 'Price Chg (Window)%', 'Smart Money Flow (Rp)', 'Retail Flow (Rp)', 'Sector']],
             column_config={
@@ -452,7 +460,7 @@ with tab5:
         st.markdown("---")
         st.markdown("### 🎯 Divergence Map (Flow vs Price)")
         
-        # Scatter Plot - Tetap numerik untuk plotting
+        # Scatter Plot
         fig_scat = px.scatter(
             df_accum, x="Smart Money Flow (Rp)", y="Price Chg (Window)%", 
             color="Sector", size="Price", hover_data=['Code', 'Signal'], text="Code",
@@ -461,8 +469,8 @@ with tab5:
         fig_scat.add_hline(y=0, line_dash="dash", line_color="gray")
         fig_scat.update_traces(textposition='top center')
         
-        # Format Axis Scatter Plot
-        fig_scat.update_layout(xaxis_tickformat=',.0f') 
+        # Format Axis X di Chart (Biar ada komanya juga)
+        fig_scat.update_layout(xaxis_tickformat=',.0f')
         fig_scat.update_traces(hovertemplate='<b>%{text}</b><br>Flow: Rp %{x:,.0f}<br>Chg: %{y:.2f}%')
         
         st.plotly_chart(fig_scat, use_container_width=True)
