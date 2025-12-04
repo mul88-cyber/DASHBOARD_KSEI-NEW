@@ -293,7 +293,7 @@ st.sidebar.info(f"📅 Data Range: {df['Date'].dt.date.min()} s/d {df['Date'].dt
 st.sidebar.header("Filter Screener (Tab 4)")
 min_rotation_value = st.sidebar.number_input(
     "Min. Value Rotasi (Rp)", 
-    value=1_000_000_000, # Default turunkan ke 1M agar data pasti muncul dulu
+    value=1_000_000_000, 
     step=1_000_000_000, 
     format="%d"
 )
@@ -402,22 +402,26 @@ with tab4:
     df_scr = df_scr[mask].sort_values('Top_Buyer_Value_Rp', ascending=False)
     
     disp_cols = ['Date', 'Code', 'Top_Buyer', 'Top_Buyer_Value_Rp', 'Top_Seller', 'Top_Seller_Value_Rp', 'Price']
-    df_display_scr = df_scr[disp_cols].copy()
+    
+    # Rename kolom agar "Rp" ada di header
+    rename_map = {
+        'Top_Buyer_Value_Rp': 'Value Buyer (Rp)',
+        'Top_Seller_Value_Rp': 'Value Seller (Rp)',
+        'Price': 'Harga (Rp)'
+    }
+    df_display_scr = df_scr[disp_cols].rename(columns=rename_map)
 
-    # [FIX] Safety Cast: Paksa ke Float dan Fillna agar column_config tidak error
-    cols_to_fix = ['Top_Buyer_Value_Rp', 'Top_Seller_Value_Rp', 'Price']
-    for c in cols_to_fix:
-        df_display_scr[c] = pd.to_numeric(df_display_scr[c], errors='coerce').fillna(0)
-
+    # Format menggunakan Styler agar ada koma, sama seperti Tab 3
+    # Kita hanya format kolom numerik Rupiah
+    cols_to_fmt = ['Value Buyer (Rp)', 'Value Seller (Rp)', 'Harga (Rp)']
+    
     st.dataframe(
-        df_display_scr,
+        df_display_scr.style.format("{:,.0f}", subset=cols_to_fmt),
+        use_container_width=True, 
+        hide_index=True,
         column_config={
-            "Date": st.column_config.DateColumn("Bulan", format="MM-YYYY"),
-            "Top_Buyer_Value_Rp": st.column_config.NumberColumn("Value Buyer", format="Rp %.0f"),
-            "Top_Seller_Value_Rp": st.column_config.NumberColumn("Value Seller", format="Rp %.0f"),
-            "Price": st.column_config.NumberColumn("Harga", format="Rp %.0f")
-        },
-        use_container_width=True, hide_index=True
+            "Date": st.column_config.DateColumn("Bulan", format="MM-YYYY")
+        }
     )
 
 # --- TAB 5: SINYAL POTENSIAL (FIXED) ---
@@ -441,20 +445,23 @@ with tab5:
             
         st.markdown("### 🏆 Top Picks: Big Accumulation")
         
-        # [FIX] Safety Cast: Paksa ke Float dan Fillna
-        cols_to_fix_sig = ['Price', 'Price Chg (Window)%', 'Smart Money Flow (Rp)', 'Retail Flow (Rp)']
-        for c in cols_to_fix_sig:
-            df_accum[c] = pd.to_numeric(df_accum[c], errors='coerce').fillna(0)
-
+        # Persiapan Dataframe untuk Display
+        df_show = df_accum[['Code', 'Signal', 'Price', 'Price Chg (Window)%', 'Smart Money Flow (Rp)', 'Retail Flow (Rp)', 'Sector']].copy()
+        
+        # Rename Header
+        df_show = df_show.rename(columns={
+            'Price': 'Harga (Rp)',
+            'Smart Money Flow (Rp)': 'Smart Money (Rp)',
+            'Retail Flow (Rp)': 'Retail Flow (Rp)'
+        })
+        
+        # Format Style (Koma Ribuan)
+        fmt_cols = ['Harga (Rp)', 'Smart Money (Rp)', 'Retail Flow (Rp)']
+        
         st.dataframe(
-            df_accum[['Code', 'Signal', 'Price', 'Price Chg (Window)%', 'Smart Money Flow (Rp)', 'Retail Flow (Rp)', 'Sector']],
-            column_config={
-                "Price": st.column_config.NumberColumn("Harga", format="Rp %.0f"),
-                "Price Chg (Window)%": st.column_config.NumberColumn("Chg % (Periode)", format="%.2f %%"),
-                "Smart Money Flow (Rp)": st.column_config.NumberColumn("Smart Money (Net)", format="Rp %.0f"),
-                "Retail Flow (Rp)": st.column_config.NumberColumn("Retail Flow (Net)", format="Rp %.0f"),
-            },
-            use_container_width=True, hide_index=True
+            df_show.style.format("{:,.0f}", subset=fmt_cols).format("{:.2f}%", subset=['Price Chg (Window)%']),
+            use_container_width=True, 
+            hide_index=True
         )
         
         st.markdown("---")
