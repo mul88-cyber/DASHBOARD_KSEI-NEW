@@ -35,12 +35,10 @@ OWNERSHIP_CHG_COLS = [f"{col}_chg" for col in OWNERSHIP_COLS]
 OWNERSHIP_CHG_RP_COLS = [f"{col}_chg_Rp" for col in OWNERSHIP_COLS]
 
 # --- KONFIGURASI KELOMPOK PEMAIN (BANDARMOLOGY) ---
-# Smart Money: Institusi Asing & Lokal yang biasanya menggerakkan pasar
 SMART_MONEY_COLS = [
     'Foreign IS_chg_Rp', 'Foreign IB_chg_Rp', 'Foreign PF_chg_Rp', 
     'Local IS_chg_Rp', 'Local PF_chg_Rp', 'Local MF_chg_Rp', 'Local IB_chg_Rp'
 ]
-# Retail: Investor Ritel Lokal (biasanya yang dimakan bandar)
 RETAIL_COLS = ['Local ID_chg_Rp']
 
 # ==============================================================================
@@ -103,7 +101,6 @@ def load_data():
         else:
             df['Sector'] = 'Others'
 
-        # Konversi ke Numerik
         cols_to_numeric = [
             'Price', 'Price_Chg %', 'Free Float', 'Total_Local', 'Total_Foreign',
             'Top_Buyer_Vol', 'Top_Seller_Vol', 'Sec. Num',
@@ -118,7 +115,6 @@ def load_data():
 
         df = df.dropna(subset=['Date', 'Code'])
 
-        # Hitung Total Change (Rp & Vol)
         local_chg_rp_cols = [col for col in OWNERSHIP_CHG_RP_COLS if 'Local' in col and col in df.columns]
         foreign_chg_rp_cols = [col for col in OWNERSHIP_CHG_RP_COLS if 'Foreign' in col and col in df.columns]
         df['Total_Local_chg_Rp'] = df[local_chg_rp_cols].sum(axis=1)
@@ -178,11 +174,7 @@ def get_stock_ownership_state(df, stock_code):
 @st.cache_data
 def calculate_monthly_change_table(df_stock):
     """(TAB 3 Table) Menghitung perubahan bulanan (Volume)."""
-    # Karena data sudah bulanan, kita bisa langsung pakai
-    # Tapi untuk memastikan urutan, kita sort date desc
     df_display = df_stock.sort_values('Date', ascending=False).copy()
-    
-    # Pilih kolom Change Volume saja untuk display
     cols = ['Date'] + OWNERSHIP_CHG_COLS
     df_res = df_display[cols].copy()
     df_res.rename(columns={'Date': 'Bulan'}, inplace=True)
@@ -193,7 +185,6 @@ def calculate_monthly_change_table(df_stock):
 def calculate_monthly_sector_flow(df_filtered):
     """(TAB 4 Chart) Menghitung total aliran dana bulanan per sektor."""
     df_temp = df_filtered.set_index('Date')
-    # Resample bulanan (meskipun data sudah bulanan, untuk safety)
     monthly_flow = df_temp.groupby('Sector')['Total_chg_Rp'].resample('MS').sum().reset_index()
     monthly_flow.columns = ['Sector', 'Month', 'Net Flow (Rp)']
     return monthly_flow, None
@@ -202,7 +193,7 @@ def calculate_monthly_sector_flow(df_filtered):
 def calculate_smart_money_signals(df_year, window_periods=3):
     """
     (TAB 5) Algoritma Mencari Saham Potensial.
-    Logika: Smart Money Akumulasi vs Retail Distribusi dalam N bulan terakhir.
+    Logika: Smart Money Akumulasi vs Retail Distribusi.
     """
     if df_year.empty: return pd.DataFrame()
     
@@ -212,41 +203,32 @@ def calculate_smart_money_signals(df_year, window_periods=3):
     for code in codes:
         df_stock = df_year[df_year['Code'] == code].sort_values('Date')
         
-        # Ambil window terakhir (misal 3 bulan terakhir)
+        # Ambil window terakhir
         df_window = df_stock.tail(window_periods)
         if df_window.empty: continue
 
-        # --- HITUNG METRIK ---
         last_price = df_window.iloc[-1]['Price']
         start_price = df_window.iloc[0]['Price']
         
-        # Price Change selama periode window
         price_chg_pct = 0
         if start_price > 0:
             price_chg_pct = ((last_price - start_price) / start_price) * 100
         
-        # Total akumulasi Smart Money & Retail (Rp) di window ini
         valid_sm_cols = [c for c in SMART_MONEY_COLS if c in df_stock.columns]
         valid_ret_cols = [c for c in RETAIL_COLS if c in df_stock.columns]
         
         sm_flow_sum = df_window[valid_sm_cols].sum().sum()
         retail_flow_sum = df_window[valid_ret_cols].sum().sum()
         
-        # --- LOGIC PENENTUAN SINYAL ---
         status = "Netral"
         score = 0
         
-        # Skenario 1: Big Accumulation (Bandar Masuk, Ritel Keluar)
-        if sm_flow_sum > 5_000_000_000 and retail_flow_sum < 0: # Minimal 5 Miliar (Bulanan angkanya besar)
+        if sm_flow_sum > 5_000_000_000 and retail_flow_sum < 0: 
             status = "🔥 Big Accumulation"
             score = 100
-            
-        # Skenario 2: Divergence (Harga Turun/Sideways, Bandar Masuk)
         elif sm_flow_sum > 2_000_000_000 and price_chg_pct <= 3:
             status = "💎 Divergence (Collect)"
             score = 80
-            
-        # Skenario 3: Distribution (Bandar Keluar, Ritel Nampung)
         elif sm_flow_sum < -5_000_000_000 and retail_flow_sum > 0:
             status = "⚠️ Distribution"
             score = -50
@@ -305,12 +287,17 @@ if st.sidebar.button("🔄 Refresh Data"):
     st.cache_data.clear()
     st.rerun()
 
-# Otomatis terpilih 2025 karena data sudah difilter saat load
 st.sidebar.info(f"📅 Data Range: {df['Date'].dt.date.min()} s/d {df['Date'].dt.date.max()}")
 
 # Filter Screener (Tab 4)
 st.sidebar.header("Filter Screener (Tab 4)")
-min_rotation_value = st.sidebar.number_input("Min. Value Rotasi (Rp)", value=5_000_000_000, step=1_000_000_000, format="%d")
+min_rotation_value = st.sidebar.number_input(
+    "Min. Value Rotasi (Rp)", 
+    value=5_000_000_000, 
+    step=1_000_000_000, 
+    format="%d"
+)
+st.sidebar.caption(f"Setting saat ini: Rp {min_rotation_value:,.0f}")
 
 # ==============================================================================
 # 📑 TABS VISUALISASI
@@ -330,7 +317,9 @@ with tab1:
     
     st.markdown("**Aliran Dana Kumulatif (Rp)**")
     fig_macro = px.line(df_cum_flow, x='Date', y='Cumulative Flow (Rp)', color='Kategori', title='Akumulasi Net Flow Lokal vs Asing')
+    # Update format Y axis ke koma ribuan
     fig_macro.update_layout(hovermode="x unified", yaxis_tickformat=',.0f')
+    fig_macro.update_traces(hovertemplate='Tanggal: %{x}<br>Flow: %{y:,.0f}')
     st.plotly_chart(fig_macro, use_container_width=True)
     
     c1, c2 = st.columns(2)
@@ -352,13 +341,13 @@ with tab2:
         c1, c2 = st.columns(2)
         with c1:
             st.markdown(f"**Top Buy Sektor oleh {sel_cat}**")
-            fig_buy = px.bar(df_sec_flow.head(10), x='Net Flow (Rp)', y='Sector', orientation='h', color_discrete_sequence=['green'])
-            fig_buy.update_layout(yaxis={'categoryorder':'total ascending'})
+            fig_buy = px.bar(df_sec_flow.head(10), x='Net Flow (Rp)', y='Sector', orientation='h', color_discrete_sequence=['green'], text_auto=',.0f')
+            fig_buy.update_layout(yaxis={'categoryorder':'total ascending'}, xaxis_tickformat=',.0f')
             st.plotly_chart(fig_buy, use_container_width=True)
         with c2:
             st.markdown(f"**Top Sell Sektor oleh {sel_cat}**")
-            fig_sell = px.bar(df_sec_flow.tail(10), x='Net Flow (Rp)', y='Sector', orientation='h', color_discrete_sequence=['red'])
-            fig_sell.update_layout(yaxis={'categoryorder':'total descending'})
+            fig_sell = px.bar(df_sec_flow.tail(10), x='Net Flow (Rp)', y='Sector', orientation='h', color_discrete_sequence=['red'], text_auto=',.0f')
+            fig_sell.update_layout(yaxis={'categoryorder':'total descending'}, xaxis_tickformat=',.0f')
             st.plotly_chart(fig_sell, use_container_width=True)
 
 # --- TAB 3: INDIVIDUAL ---
@@ -380,11 +369,20 @@ with tab3:
         with col_chart:
             st.markdown("**Komposisi Pemegang Saham**")
             fig_pie = px.pie(df_state, names='Kategori', values='Jumlah Saham', hole=0.4)
+            fig_pie.update_traces(textinfo='percent+label', texttemplate='%{label}<br>%{value:,.0f}')
             st.plotly_chart(fig_pie, use_container_width=True)
         with col_data:
-            st.markdown("**Perubahan Bulanan (Volume)**")
+            st.markdown("**Perubahan Bulanan (Volume Lembar)**")
             df_m_chg = calculate_monthly_change_table(df_stock)
-            st.dataframe(df_m_chg.style.apply(highlight_max_min, subset=OWNERSHIP_CHG_COLS, axis=1).format("{:,.0f}", subset=OWNERSHIP_CHG_COLS), use_container_width=True, hide_index=True)
+            
+            # Format tabel dengan koma ribuan menggunakan Pandas Styler
+            st.dataframe(
+                df_m_chg.style
+                .apply(highlight_max_min, subset=OWNERSHIP_CHG_COLS, axis=1)
+                .format("{:,.0f}", subset=OWNERSHIP_CHG_COLS), 
+                use_container_width=True, 
+                hide_index=True
+            )
 
 # --- TAB 4: SCREENER ---
 with tab4:
@@ -394,20 +392,24 @@ with tab4:
         st.markdown("**Tren Flow Sektor Bulanan**")
         top_sectors = df_monthly_sec.groupby('Sector')['Net Flow (Rp)'].sum().abs().nlargest(5).index
         fig_sec = px.line(df_monthly_sec[df_monthly_sec['Sector'].isin(top_sectors)], x='Month', y='Net Flow (Rp)', color='Sector')
+        fig_sec.update_layout(yaxis_tickformat=',.0f')
         st.plotly_chart(fig_sec, use_container_width=True)
 
     st.markdown(f"**Saham dengan Rotasi > Rp {min_rotation_value:,.0f}**")
-    # Filter Screener Logic
+    
+    # Filter Logic
     df_scr = df.copy()
     mask = (df_scr['Top_Buyer_Value_Rp'] >= min_rotation_value) | (df_scr['Top_Seller_Value_Rp'].abs() >= min_rotation_value)
     df_scr = df_scr[mask].sort_values('Top_Buyer_Value_Rp', ascending=False)
     
     disp_cols = ['Date', 'Code', 'Top_Buyer', 'Top_Buyer_Value_Rp', 'Top_Seller', 'Top_Seller_Value_Rp', 'Price']
+    
+    # Tampilkan Dataframe dengan Format Ribuan (Safe Mode: NumberColumn)
     st.dataframe(
         df_scr[disp_cols],
         column_config={
             "Date": st.column_config.DateColumn("Bulan", format="MM-YYYY"),
-            "Top_Buyer_Value_Rp": st.column_config.NumberColumn("Value Buyer", format="Rp %.0f"),
+            "Top_Buyer_Value_Rp": st.column_config.NumberColumn("Value Buyer", format="Rp %.0f"), # %.0f otomatis kasih koma di UI
             "Top_Seller_Value_Rp": st.column_config.NumberColumn("Value Seller", format="Rp %.0f"),
             "Price": st.column_config.NumberColumn("Harga", format="Rp %.0f")
         },
@@ -417,12 +419,13 @@ with tab4:
 # --- TAB 5: SINYAL POTENSIAL (NEW) ---
 with tab5:
     st.subheader("💎 Radar Saham Potensial (Smart Money Flow)")
-    st.info("Mendeteksi akumulasi Smart Money (Asing+Institusi) vs Distribusi Ritel (Local ID) pada data bulanan.")
+    st.info("Mendeteksi akumulasi Smart Money (Asing+Institusi) vs Distribusi Ritel (Local ID).")
     
     col_s1, col_s2 = st.columns([1, 3])
     with col_s1:
         lookback = st.slider("Window Analisis (Bulan)", 1, 6, 3)
         min_acc = st.number_input("Min. Akumulasi (Rp Miliar)", value=5.0, step=1.0) * 1_000_000_000
+        st.caption(f"Filter: > Rp {min_acc:,.0f}")
         
     df_sig = calculate_smart_money_signals(df, window_periods=lookback)
     
@@ -433,18 +436,23 @@ with tab5:
             st.metric("Saham Terdeteksi", f"{len(df_accum)} Emitter")
             
         st.markdown("### 🏆 Top Picks: Big Accumulation")
+        
+        # Format Dataframe agar ada Koma Ribuan
         st.dataframe(
             df_accum[['Code', 'Signal', 'Price', 'Price Chg (Window)%', 'Smart Money Flow (Rp)', 'Retail Flow (Rp)', 'Sector']],
             column_config={
-                "Price Chg (Window)%": st.column_config.NumberColumn("Chg % (Periode)", format="%.2f%%"),
-                "Smart Money Flow (Rp)": st.column_config.NumberColumn("Smart Money Flow", format="Rp %.2f"),
-                "Retail Flow (Rp)": st.column_config.NumberColumn("Retail Flow", format="Rp %.2f"),
+                "Price": st.column_config.NumberColumn("Harga", format="Rp %.0f"),
+                "Price Chg (Window)%": st.column_config.NumberColumn("Chg % (Periode)", format="%.2f %%"),
+                "Smart Money Flow (Rp)": st.column_config.NumberColumn("Smart Money (Net)", format="Rp %.0f"),
+                "Retail Flow (Rp)": st.column_config.NumberColumn("Retail Flow (Net)", format="Rp %.0f"),
             },
             use_container_width=True, hide_index=True
         )
         
         st.markdown("---")
         st.markdown("### 🎯 Divergence Map (Flow vs Price)")
+        
+        # Scatter Plot - Tetap numerik untuk plotting
         fig_scat = px.scatter(
             df_accum, x="Smart Money Flow (Rp)", y="Price Chg (Window)%", 
             color="Sector", size="Price", hover_data=['Code', 'Signal'], text="Code",
@@ -452,6 +460,11 @@ with tab5:
         )
         fig_scat.add_hline(y=0, line_dash="dash", line_color="gray")
         fig_scat.update_traces(textposition='top center')
+        
+        # Format Axis Scatter Plot
+        fig_scat.update_layout(xaxis_tickformat=',.0f') 
+        fig_scat.update_traces(hovertemplate='<b>%{text}</b><br>Flow: Rp %{x:,.0f}<br>Chg: %{y:.2f}%')
+        
         st.plotly_chart(fig_scat, use_container_width=True)
     else:
         st.warning("Belum ada sinyal yang memenuhi kriteria.")
