@@ -350,7 +350,7 @@ with tab2:
             fig_sell.update_layout(yaxis={'categoryorder':'total descending'}, xaxis_tickformat=',.0f')
             st.plotly_chart(fig_sell, use_container_width=True)
 
-# --- TAB 3: INDIVIDUAL ---
+# --- TAB 3: INDIVIDUAL (LAYOUT FIXED) ---
 with tab3:
     st.subheader("Deep Dive Saham")
     stocks = sorted(df['Code'].unique())
@@ -360,28 +360,37 @@ with tab3:
         df_stock = df[df['Code'] == sel_stock].sort_values('Date')
         df_state, last_row = get_stock_ownership_state(df, sel_stock)
         
+        # 1. Metrics (Top)
         c1, c2, c3 = st.columns(3)
         c1.metric("Harga Terakhir", f"Rp {last_row['Price']:,.0f}")
         c2.metric("Free Float", f"{last_row['Free Float']}%")
         c3.metric("Sektor", last_row['Sector'])
         
-        col_chart, col_data = st.columns([2, 1])
-        with col_chart:
+        st.markdown("---")
+        
+        # 2. Pie Chart (Left - Constrained Width)
+        c_pie, c_pad = st.columns([1, 2]) # Ratio 1:2 agar pie chart tidak raksasa
+        with c_pie:
             st.markdown("**Komposisi Pemegang Saham**")
             fig_pie = px.pie(df_state, names='Kategori', values='Jumlah Saham', hole=0.4)
             fig_pie.update_traces(textinfo='percent+label', texttemplate='%{label}<br>%{value:,.0f}')
+            fig_pie.update_layout(margin=dict(t=20, b=20, l=20, r=20))
             st.plotly_chart(fig_pie, use_container_width=True)
-        with col_data:
-            st.markdown("**Perubahan Bulanan (Volume Lembar)**")
-            df_m_chg = calculate_monthly_change_table(df_stock)
             
-            st.dataframe(
-                df_m_chg.style
-                .apply(highlight_max_min, subset=OWNERSHIP_CHG_COLS, axis=1)
-                .format("{:,.0f}", subset=OWNERSHIP_CHG_COLS), 
-                use_container_width=True, 
-                hide_index=True
-            )
+        st.markdown("---")
+        
+        # 3. Table (Bottom - Full Width)
+        st.markdown("### 📅 Detail Perubahan Bulanan (Volume Lembar)")
+        df_m_chg = calculate_monthly_change_table(df_stock)
+        
+        # Tampilkan tabel full width agar tidak scroll
+        st.dataframe(
+            df_m_chg.style
+            .apply(highlight_max_min, subset=OWNERSHIP_CHG_COLS, axis=1)
+            .format("{:,.0f}", subset=OWNERSHIP_CHG_COLS), 
+            use_container_width=True, 
+            hide_index=True
+        )
 
 # --- TAB 4: SCREENER (FIXED) ---
 with tab4:
@@ -411,8 +420,7 @@ with tab4:
     }
     df_display_scr = df_scr[disp_cols].rename(columns=rename_map)
 
-    # Format menggunakan Styler agar ada koma, sama seperti Tab 3
-    # Kita hanya format kolom numerik Rupiah
+    # Format menggunakan Styler agar ada koma
     cols_to_fmt = ['Value Buyer (Rp)', 'Value Seller (Rp)', 'Harga (Rp)']
     
     st.dataframe(
