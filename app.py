@@ -129,7 +129,7 @@ def load_data():
         return pd.DataFrame(), msg, "error"
 
 # ==============================================================================
-# 🛠️ 4) FUNGSI KALKULASI
+# 🛠️ 4) FUNGSI KALKULASI & PLOTTING
 # ==============================================================================
 
 @st.cache_data
@@ -192,78 +192,119 @@ def calculate_monthly_sector_flow(df_filtered):
 
 @st.cache_data
 def calculate_smart_money_signals(df_year, window_periods=3):
-    """
-    (TAB 5) Algoritma Mencari Saham Potensial.
-    Logika: Smart Money Akumulasi vs Retail Distribusi.
-    """
+    """(TAB 5) Algoritma Mencari Saham Potensial."""
     if df_year.empty: return pd.DataFrame()
-    
     codes = df_year['Code'].unique()
     results = []
-
     for code in codes:
         df_stock = df_year[df_year['Code'] == code].sort_values('Date')
-        
-        # Ambil window terakhir
         df_window = df_stock.tail(window_periods)
         if df_window.empty: continue
-
         last_price = df_window.iloc[-1]['Price']
         start_price = df_window.iloc[0]['Price']
-        
         price_chg_pct = 0
         if start_price > 0:
             price_chg_pct = ((last_price - start_price) / start_price) * 100
-        
         valid_sm_cols = [c for c in SMART_MONEY_COLS if c in df_stock.columns]
         valid_ret_cols = [c for c in RETAIL_COLS if c in df_stock.columns]
-        
         sm_flow_sum = df_window[valid_sm_cols].sum().sum()
         retail_flow_sum = df_window[valid_ret_cols].sum().sum()
-        
-        status = "Netral"
-        score = 0
-        
-        if sm_flow_sum > 5_000_000_000 and retail_flow_sum < 0: 
-            status = "🔥 Big Accumulation"
-            score = 100
-        elif sm_flow_sum > 2_000_000_000 and price_chg_pct <= 3:
-            status = "💎 Divergence (Collect)"
-            score = 80
-        elif sm_flow_sum < -5_000_000_000 and retail_flow_sum > 0:
-            status = "⚠️ Distribution"
-            score = -50
-            
+        status = "Netral"; score = 0
+        if sm_flow_sum > 5_000_000_000 and retail_flow_sum < 0: status = "🔥 Big Accumulation"; score = 100
+        elif sm_flow_sum > 2_000_000_000 and price_chg_pct <= 3: status = "💎 Divergence (Collect)"; score = 80
+        elif sm_flow_sum < -5_000_000_000 and retail_flow_sum > 0: status = "⚠️ Distribution"; score = -50
         if abs(score) >= 50:
-            results.append({
-                'Code': code,
-                'Sector': df_window.iloc[-1].get('Sector', 'N/A'),
-                'Price': last_price,
-                'Price Chg (Window)%': price_chg_pct,
-                'Smart Money Flow (Rp)': sm_flow_sum,
-                'Retail Flow (Rp)': retail_flow_sum,
-                'Signal': status,
-                'Score': score
-            })
-            
+            results.append({'Code': code, 'Sector': df_window.iloc[-1].get('Sector', 'N/A'), 'Price': last_price, 'Price Chg (Window)%': price_chg_pct, 'Smart Money Flow (Rp)': sm_flow_sum, 'Retail Flow (Rp)': retail_flow_sum, 'Signal': status, 'Score': score})
     df_res = pd.DataFrame(results)
-    if not df_res.empty:
-        df_res = df_res.sort_values(by='Smart Money Flow (Rp)', ascending=False)
-        
+    if not df_res.empty: df_res = df_res.sort_values(by='Smart Money Flow (Rp)', ascending=False)
     return df_res
 
-def highlight_max_min(s):
-    s_numeric = pd.to_numeric(s, errors='coerce')
-    max_val = s_numeric[s_numeric > 0].max()
-    min_val = s_numeric[s_numeric < 0].min()
-    colors = []
-    for val in s_numeric:
-        if pd.notna(val):
-            if val == max_val and val > 0: colors.append('background-color: lightgreen')
-            elif val == min_val and val < 0: colors.append('background-color: lightcoral')
-            else: colors.append('')
-        else: colors.append('')
-    return colors
+# --- FUNGSI BARU: SANKEY CHART ---
+def create_sankey_chart(df, stock_code, selected_date, mode='Volume'):
+    """Membuat diagram Sankey (Flow Sellers -> Market -> Buyers)."""
+    
+    # 1. Filter Data
+    row = df[(df['Code'] == stock_code) & (df['Date'] == selected_date)]
+    if row.empty: return None
+    row = row.iloc[0] # Series
+    
+    # 2. Tentukan Kolom (Volume/Rp)
+    cols_to_use = OWNERSHIP_CHG_COLS if mode == 'Volume' else OWNERSHIP_CHG_RP_COLS
+    
+    # 3. Pisahkan Seller (Negatif) & Buyer (Positif)
+    sellers = []
+    buyers = []
+    
+    for col in cols_to_use:
+        val = row[col]
+        cat_name = col.replace('_chg_Rp', '').replace('_chg', '') # Bersihkan nama
+        
+        if val < 0:
+            sellers.append({'label': cat_name, 'value': abs(val)})
+        elif val > 0:
+            buyers.append({'label': cat_name, 'value': val})
+            
+    if not sellers and not buyers: return None
+    
+    # 4. Bangun Node & Link Sankey
+    # Node 0: MARKET (Hub)
+    # Node 1..N: Sellers
+    # Node N+1..M: Buyers
+    
+    labels = ["MARKET"]
+    colors = ["lightgrey"] # Warna Market
+    
+    source = []
+    target = []
+    values = []
+    link_colors = []
+    
+    # --- PROSES SELLERS (Source -> Market) ---
+    for s in sellers:
+        labels.append(s['label'])
+        current_idx = len(labels) - 1
+        colors.append("#ff6b6b") # Merah (Seller)
+        
+        # Link: Seller -> Market (Index 0)
+        source.append(current_idx)
+        target.append(0)
+        values.append(s['value'])
+        link_colors.append("rgba(255, 107, 107, 0.4)") # Merah transparan
+        
+    # --- PROSES BUYERS (Market -> Target) ---
+    for b in buyers:
+        labels.append(b['label'])
+        current_idx = len(labels) - 1
+        colors.append("#51cf66") # Hijau (Buyer)
+        
+        # Link: Market (Index 0) -> Buyer
+        source.append(0)
+        target.append(current_idx)
+        values.append(b['value'])
+        link_colors.append("rgba(81, 207, 102, 0.4)") # Hijau transparan
+        
+    # 5. Buat Figure
+    unit_label = "Lembar" if mode == 'Volume' else "Rp"
+    
+    fig = go.Figure(data=[go.Sankey(
+        node = dict(
+            pad = 15,
+            thickness = 20,
+            line = dict(color = "black", width = 0.5),
+            label = labels,
+            color = colors
+        ),
+        link = dict(
+            source = source,
+            target = target,
+            value = values,
+            color = link_colors,
+            hovertemplate=f'%{{source.label}} -> %{{target.label}}<br>Value: %{{value:,.0f}} {unit_label}<extra></extra>'
+        ))])
+
+    title_text = f"Peta Arus Dana {stock_code} ({selected_date.strftime('%B %Y')}) - {mode}"
+    fig.update_layout(title_text=title_text, font_size=12, height=500)
+    return fig
 
 # ==============================================================================
 # 💎 5) LAYOUT UTAMA
@@ -351,7 +392,7 @@ with tab2:
             fig_sell.update_layout(yaxis={'categoryorder':'total descending'}, xaxis_tickformat=',.0f')
             st.plotly_chart(fig_sell, use_container_width=True)
 
-# --- TAB 3: INDIVIDUAL (SUNBURST DISTRIBUTION) ---
+# --- TAB 3: INDIVIDUAL (SANKEY EDITION) ---
 with tab3:
     st.subheader("Deep Dive Saham")
     stocks = sorted(df['Code'].unique())
@@ -369,93 +410,64 @@ with tab3:
         
         st.markdown("---")
         
-        # 2. Advanced Distribution Layout (Sunburst + Breakdown)
-        st.markdown("**Peta Distribusi Kepemilikan (Sunburst)**")
-        st.caption("Memvisualisasikan porsi Lokal, Asing, dan Non-Scripless (Warkat/Other) secara hierarkis.")
-        
-        # --- Logic Sunburst: Mengatasi "Not Zero Sum" ---
-        sec_num = last_row.get('Sec. Num', 0)
-        total_local = last_row.get('Total_Local', 0)
-        total_foreign = last_row.get('Total_Foreign', 0)
-        
-        # Hitung Gap (Non-Scripless/Warkat/Locked)
-        recorded_total = total_local + total_foreign
-        gap_shares = max(0, sec_num - recorded_total)
-        
-        # Data untuk Sunburst
-        # Level 0: Total Saham
-        # Level 1: Lokal, Asing, Non-Scripless
-        # Level 2: Detail Kategori (IS, IB, dll)
-        
-        labels = ["Total Saham", "Investor Lokal", "Investor Asing"]
-        parents = ["", "Total Saham", "Total Saham"]
-        values = [sec_num, total_local, total_foreign]
-        
-        # Tambahkan Gap jika signifikan
-        if gap_shares > 0:
-            labels.append("Warkat / Others")
-            parents.append("Total Saham")
-            values.append(gap_shares)
+        # 2. Distribution Layout (Sunburst + Breakdown)
+        c_sun, c_bar = st.columns([1.5, 1])
+        with c_sun:
+            st.markdown("**Peta Kepemilikan (Sunburst)**")
+            # Logic Sunburst
+            sec_num = last_row.get('Sec. Num', 0)
+            total_local = last_row.get('Total_Local', 0)
+            total_foreign = last_row.get('Total_Foreign', 0)
+            gap_shares = max(0, sec_num - total_local - total_foreign)
             
-        # Tambahkan Detail Kategori ke Sunburst
-        for index, row in df_state.iterrows():
-            cat_name = row['Kategori']
-            share_val = row['Jumlah Saham']
+            labels = ["Total", "Lokal", "Asing"]; parents = ["", "Total", "Total"]; values = [sec_num, total_local, total_foreign]
+            if gap_shares > 0: labels.append("Warkat"); parents.append("Total"); values.append(gap_shares)
             
-            if share_val > 0:
-                parent_group = "Investor Lokal" if "Local" in cat_name else "Investor Asing"
-                # Bersihkan nama untuk display (Hapus 'Local ' / 'Foreign ')
-                display_name = cat_name.replace('Local ', '').replace('Foreign ', '') + f" ({parent_group[9:]})"
-                
-                labels.append(display_name)
-                parents.append(parent_group)
-                values.append(share_val)
-                
-        # Buat Sunburst Chart
-        fig_sun = go.Figure(go.Sunburst(
-            labels=labels,
-            parents=parents,
-            values=values,
-            branchvalues="total",
-            textinfo="label+percent parent",
-            hovertemplate='<b>%{label}</b><br>Shares: %{value:,.0f}<br>%{percentRoot:.1%} of Total<extra></extra>'
-        ))
-        fig_sun.update_layout(margin=dict(t=10, l=10, r=10, b=10), height=500)
-        
-        # Layout Kolom: Sunburst (Kiri) & Top Holders Bar (Kanan)
-        col_sun, col_bar = st.columns([1.5, 1])
-        
-        with col_sun:
+            for index, row in df_state.iterrows():
+                if row['Jumlah Saham'] > 0:
+                    cat_name = row['Kategori']
+                    parent = "Lokal" if "Local" in cat_name else "Asing"
+                    disp = cat_name.replace('Local ','').replace('Foreign ','')
+                    labels.append(disp); parents.append(parent); values.append(row['Jumlah Saham'])
+                    
+            fig_sun = go.Figure(go.Sunburst(labels=labels, parents=parents, values=values, branchvalues="total"))
+            fig_sun.update_layout(margin=dict(t=0, l=0, r=0, b=0), height=400)
             st.plotly_chart(fig_sun, use_container_width=True)
             
-        with col_bar:
-            st.markdown("**Top 5 Kategori Pemegang Saham**")
-            top_holders = df_state.sort_values('Jumlah Saham', ascending=False).head(5)
-            fig_hbar = px.bar(top_holders, x='Jumlah Saham', y='Kategori', orientation='h', text_auto='.2s')
-            fig_hbar.update_layout(yaxis={'categoryorder':'total ascending'})
+        with c_bar:
+            st.markdown("**Top 5 Holders**")
+            top_h = df_state.sort_values('Jumlah Saham', ascending=False).head(5)
+            fig_hbar = px.bar(top_h, x='Jumlah Saham', y='Kategori', orientation='h', text_auto='.2s')
+            fig_hbar.update_layout(yaxis={'categoryorder':'total ascending'}, height=400)
             st.plotly_chart(fig_hbar, use_container_width=True)
-            
-            st.info(f"""
-            **Ringkasan Struktur:**
-            - **Total Listed:** {sec_num:,.0f} Lembar
-            - **Scripless (Trading):** {recorded_total:,.0f} Lembar
-            - **Warkat/Locked:** {gap_shares:,.0f} Lembar
-            """)
 
         st.markdown("---")
         
-        # 3. Table (Bottom - Full Width)
-        st.markdown("### 📅 Detail Perubahan Bulanan (Volume Lembar)")
-        df_m_chg = calculate_monthly_change_table(df_stock)
+        # 3. SANKEY FLOW (NEW FEATURE)
+        st.subheader("🔄 Visualisasi Aliran Dana (Sankey Flow)")
+        st.caption("Memvisualisasikan perpindahan dana/barang dari Penjual (Kiri) ke Pembeli (Kanan) melalui Pasar.")
         
-        # Tampilkan tabel full width agar tidak scroll
-        st.dataframe(
-            df_m_chg.style
-            .apply(highlight_max_min, subset=OWNERSHIP_CHG_COLS, axis=1)
-            .format("{:,.0f}", subset=OWNERSHIP_CHG_COLS), 
-            use_container_width=True, 
-            hide_index=True
-        )
+        col_f1, col_f2 = st.columns([1, 4])
+        
+        with col_f1:
+            st.markdown("##### Filter Flow")
+            # Ambil tanggal yang tersedia untuk saham ini
+            available_dates = df_stock['Date'].sort_values(ascending=False).dt.strftime('%Y-%m-%d').unique()
+            
+            # Pilihan Tanggal
+            sel_date_str = st.selectbox("Pilih Bulan:", available_dates, index=0)
+            sel_date_ts = pd.Timestamp(sel_date_str)
+            
+            # Pilihan Mode (Volume / Value)
+            mode_sankey = st.radio("Satuan:", ["Value (Rp)", "Volume (Lembar)"])
+            mode_key = 'Value' if 'Rp' in mode_sankey else 'Volume'
+            
+        with col_f2:
+            fig_sankey = create_sankey_chart(df, sel_stock, sel_date_ts, mode=mode_key)
+            if fig_sankey:
+                st.plotly_chart(fig_sankey, use_container_width=True)
+            else:
+                st.info(f"Tidak ada perubahan kepemilikan signifikan pada bulan {sel_date_str}.")
 
 # --- TAB 4: SCREENER (FIXED) ---
 with tab4:
