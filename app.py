@@ -129,8 +129,37 @@ def load_data():
         return pd.DataFrame(), msg, "error"
 
 # ==============================================================================
-# 🛠️ 4) FUNGSI KALKULASI & PLOTTING
+# 🛠️ 4) FUNGSI KALKULASI & FORMATTING (UPDATED)
 # ==============================================================================
+
+def format_id_short(value, is_currency=False):
+    """Format angka ke Juta (Jt), Milyar (M), Triliun (T)."""
+    if pd.isna(value) or value == 0:
+        return "0"
+    
+    val_abs = abs(value)
+    suffix = ""
+    divisor = 1
+    
+    if val_abs >= 1_000_000_000_000:
+        suffix = " T"
+        divisor = 1_000_000_000_000
+    elif val_abs >= 1_000_000_000:
+        suffix = " M"
+        divisor = 1_000_000_000
+    elif val_abs >= 1_000_000:
+        suffix = " Jt"
+        divisor = 1_000_000
+    else:
+        return f"{value:,.0f}" # Angka kecil biasa
+    
+    formatted_num = f"{value/divisor:.1f}" # 1 desimal
+    # Hapus .0 di belakang (misal 5.0 M -> 5 M)
+    if formatted_num.endswith(".0"):
+        formatted_num = formatted_num[:-2]
+        
+    prefix = "Rp " if is_currency else ""
+    return f"{prefix}{formatted_num}{suffix}"
 
 @st.cache_data
 def calculate_macro_flow(df_filtered):
@@ -219,92 +248,91 @@ def calculate_smart_money_signals(df_year, window_periods=3):
     if not df_res.empty: df_res = df_res.sort_values(by='Smart Money Flow (Rp)', ascending=False)
     return df_res
 
-# --- FUNGSI BARU: SANKEY CHART ---
+# --- FUNGSI SANKEY CHART (UPDATED WITH LABELS) ---
 def create_sankey_chart(df, stock_code, selected_date, mode='Volume'):
-    """Membuat diagram Sankey (Flow Sellers -> Market -> Buyers)."""
+    """Membuat diagram Sankey dengan label angka (Jt/M/T)."""
     
     # 1. Filter Data
     row = df[(df['Code'] == stock_code) & (df['Date'] == selected_date)]
     if row.empty: return None
-    row = row.iloc[0] # Series
+    row = row.iloc[0]
     
-    # 2. Tentukan Kolom (Volume/Rp)
+    # 2. Tentukan Kolom & Satuan
     cols_to_use = OWNERSHIP_CHG_COLS if mode == 'Volume' else OWNERSHIP_CHG_RP_COLS
+    is_rp = (mode == 'Value')
     
-    # 3. Pisahkan Seller (Negatif) & Buyer (Positif)
-    sellers = []
-    buyers = []
+    # 3. Pisahkan Seller & Buyer
+    sellers = []; buyers = []; total_vol = 0
     
     for col in cols_to_use:
         val = row[col]
-        cat_name = col.replace('_chg_Rp', '').replace('_chg', '') # Bersihkan nama
+        cat_name = col.replace('_chg_Rp', '').replace('_chg', '')
         
-        if val < 0:
-            sellers.append({'label': cat_name, 'value': abs(val)})
-        elif val > 0:
-            buyers.append({'label': cat_name, 'value': val})
+        if val != 0:
+            formatted_val = format_id_short(abs(val), is_currency=is_rp)
+            # Label Node: "Foreign IB (2.5 M)"
+            label_node = f"{cat_name}\n({formatted_val})"
+            
+            if val < 0:
+                sellers.append({'label': label_node, 'value': abs(val), 'raw_name': cat_name})
+                total_vol += abs(val)
+            elif val > 0:
+                buyers.append({'label': label_node, 'value': val, 'raw_name': cat_name})
             
     if not sellers and not buyers: return None
     
-    # 4. Bangun Node & Link Sankey
-    # Node 0: MARKET (Hub)
-    # Node 1..N: Sellers
-    # Node N+1..M: Buyers
+    # 4. Bangun Node
+    # Market Node Label
+    market_fmt = format_id_short(total_vol, is_currency=is_rp)
+    labels = [f"MARKET\n({market_fmt})"]
+    colors = ["lightgrey"]
     
-    labels = ["MARKET"]
-    colors = ["lightgrey"] # Warna Market
+    source = []; target = []; values = []; link_colors = []
     
-    source = []
-    target = []
-    values = []
-    link_colors = []
-    
-    # --- PROSES SELLERS (Source -> Market) ---
+    # Sellers -> Market
     for s in sellers:
         labels.append(s['label'])
         current_idx = len(labels) - 1
-        colors.append("#ff6b6b") # Merah (Seller)
+        colors.append("#ff6b6b")
+        source.append(current_idx); target.append(0); values.append(s['value'])
+        link_colors.append("rgba(255, 107, 107, 0.4)")
         
-        # Link: Seller -> Market (Index 0)
-        source.append(current_idx)
-        target.append(0)
-        values.append(s['value'])
-        link_colors.append("rgba(255, 107, 107, 0.4)") # Merah transparan
-        
-    # --- PROSES BUYERS (Market -> Target) ---
+    # Market -> Buyers
     for b in buyers:
         labels.append(b['label'])
         current_idx = len(labels) - 1
-        colors.append("#51cf66") # Hijau (Buyer)
+        colors.append("#51cf66")
+        source.append(0); target.append(current_idx); values.append(b['value'])
+        link_colors.append("rgba(81, 207, 102, 0.4)")
         
-        # Link: Market (Index 0) -> Buyer
-        source.append(0)
-        target.append(current_idx)
-        values.append(b['value'])
-        link_colors.append("rgba(81, 207, 102, 0.4)") # Hijau transparan
-        
-    # 5. Buat Figure
-    unit_label = "Lembar" if mode == 'Volume' else "Rp"
-    
     fig = go.Figure(data=[go.Sankey(
         node = dict(
-            pad = 15,
-            thickness = 20,
+            pad = 15, thickness = 20,
             line = dict(color = "black", width = 0.5),
-            label = labels,
-            color = colors
+            label = labels, color = colors
         ),
         link = dict(
-            source = source,
-            target = target,
-            value = values,
-            color = link_colors,
-            hovertemplate=f'%{{source.label}} -> %{{target.label}}<br>Value: %{{value:,.0f}} {unit_label}<extra></extra>'
+            source = source, target = target, value = values, color = link_colors,
+            # Hover tetap detail
+            hovertemplate='%{source.label} -> %{target.label}<br>Value: %{value:,.0f}<extra></extra>'
         ))])
 
-    title_text = f"Peta Arus Dana {stock_code} ({selected_date.strftime('%B %Y')}) - {mode}"
-    fig.update_layout(title_text=title_text, font_size=12, height=500)
+    title_text = f"Arus Dana {stock_code} ({selected_date.strftime('%b %Y')}) - {mode}"
+    fig.update_layout(title_text=title_text, font_size=11, height=500)
     return fig
+
+def highlight_max_min(s):
+    s_numeric = pd.to_numeric(s, errors='coerce')
+    max_val = s_numeric[s_numeric > 0].max()
+    min_val = s_numeric[s_numeric < 0].min()
+    colors = []
+    for val in s_numeric:
+        if pd.notna(val):
+            if val == max_val and val > 0: colors.append('background-color: lightgreen')
+            elif val == min_val and val < 0: colors.append('background-color: lightcoral')
+            else: colors.append('')
+        else: colors.append('')
+    return colors
 
 # ==============================================================================
 # 💎 5) LAYOUT UTAMA
@@ -359,9 +387,7 @@ with tab1:
     
     st.markdown("**Aliran Dana Kumulatif (Rp)**")
     fig_macro = px.line(df_cum_flow, x='Date', y='Cumulative Flow (Rp)', color='Kategori', title='Akumulasi Net Flow Lokal vs Asing')
-    # Update format Y axis ke koma ribuan
     fig_macro.update_layout(hovermode="x unified", yaxis_tickformat=',.0f')
-    fig_macro.update_traces(hovertemplate='Tanggal: %{x}<br>Flow: %{y:,.0f}')
     st.plotly_chart(fig_macro, use_container_width=True)
     
     c1, c2 = st.columns(2)
@@ -392,7 +418,7 @@ with tab2:
             fig_sell.update_layout(yaxis={'categoryorder':'total descending'}, xaxis_tickformat=',.0f')
             st.plotly_chart(fig_sell, use_container_width=True)
 
-# --- TAB 3: INDIVIDUAL (SANKEY EDITION) ---
+# --- TAB 3: INDIVIDUAL (OPTIMIZED + SANKEY FORMATTED) ---
 with tab3:
     st.subheader("Deep Dive Saham")
     stocks = sorted(df['Code'].unique())
@@ -421,21 +447,47 @@ with tab3:
             gap_shares = max(0, sec_num - total_local - total_foreign)
             
             labels = ["Total", "Lokal", "Asing"]; parents = ["", "Total", "Total"]; values = [sec_num, total_local, total_foreign]
-            if gap_shares > 0: labels.append("Warkat"); parents.append("Total"); values.append(gap_shares)
+            # Format Labels untuk Sunburst
+            labels = [
+                f"Total\n({format_id_short(sec_num)})", 
+                f"Lokal\n({format_id_short(total_local)})", 
+                f"Asing\n({format_id_short(total_foreign)})"
+            ]
+            
+            # Tambahkan Data Anak (Detail Kategori)
+            text_labels = ["", "", ""] # Untuk nilai di hover/inside
+            
+            if gap_shares > 0: 
+                labels.append(f"Warkat\n({format_id_short(gap_shares)})")
+                parents.append(labels[0])
+                values.append(gap_shares)
+                text_labels.append(format_id_short(gap_shares))
             
             for index, row in df_state.iterrows():
                 if row['Jumlah Saham'] > 0:
                     cat_name = row['Kategori']
-                    parent = "Lokal" if "Local" in cat_name else "Asing"
-                    disp = cat_name.replace('Local ','').replace('Foreign ','')
-                    labels.append(disp); parents.append(parent); values.append(row['Jumlah Saham'])
+                    parent_idx = 1 if "Local" in cat_name else 2
+                    parent_name = labels[parent_idx]
                     
-            fig_sun = go.Figure(go.Sunburst(labels=labels, parents=parents, values=values, branchvalues="total"))
-            fig_sun.update_layout(margin=dict(t=0, l=0, r=0, b=0), height=400)
+                    disp_name = cat_name.replace('Local ','').replace('Foreign ','')
+                    fmt_val = format_id_short(row['Jumlah Saham'])
+                    
+                    labels.append(f"{disp_name}\n({fmt_val})")
+                    parents.append(parent_name)
+                    values.append(row['Jumlah Saham'])
+                    text_labels.append(fmt_val)
+            
+            fig_sun = go.Figure(go.Sunburst(
+                labels=labels, parents=parents, values=values, 
+                branchvalues="total",
+                textinfo="label+percent parent",
+                insidetextorientation='radial'
+            ))
+            fig_sun.update_layout(margin=dict(t=0, l=0, r=0, b=0), height=450)
             st.plotly_chart(fig_sun, use_container_width=True)
             
         with c_bar:
-            st.markdown("**Top 5 Holders**")
+            st.markdown("**Top 5 Holders (Volume)**")
             top_h = df_state.sort_values('Jumlah Saham', ascending=False).head(5)
             fig_hbar = px.bar(top_h, x='Jumlah Saham', y='Kategori', orientation='h', text_auto='.2s')
             fig_hbar.update_layout(yaxis={'categoryorder':'total ascending'}, height=400)
@@ -445,20 +497,14 @@ with tab3:
         
         # 3. SANKEY FLOW (NEW FEATURE)
         st.subheader("🔄 Visualisasi Aliran Dana (Sankey Flow)")
-        st.caption("Memvisualisasikan perpindahan dana/barang dari Penjual (Kiri) ke Pembeli (Kanan) melalui Pasar.")
         
         col_f1, col_f2 = st.columns([1, 4])
         
         with col_f1:
             st.markdown("##### Filter Flow")
-            # Ambil tanggal yang tersedia untuk saham ini
             available_dates = df_stock['Date'].sort_values(ascending=False).dt.strftime('%Y-%m-%d').unique()
-            
-            # Pilihan Tanggal
             sel_date_str = st.selectbox("Pilih Bulan:", available_dates, index=0)
             sel_date_ts = pd.Timestamp(sel_date_str)
-            
-            # Pilihan Mode (Volume / Value)
             mode_sankey = st.radio("Satuan:", ["Value (Rp)", "Volume (Lembar)"])
             mode_key = 'Value' if 'Rp' in mode_sankey else 'Volume'
             
@@ -468,6 +514,20 @@ with tab3:
                 st.plotly_chart(fig_sankey, use_container_width=True)
             else:
                 st.info(f"Tidak ada perubahan kepemilikan signifikan pada bulan {sel_date_str}.")
+        
+        st.markdown("---")
+        
+        # 4. Table (Bottom - Full Width)
+        st.markdown("### 📅 Detail Perubahan Bulanan (Volume Lembar)")
+        df_m_chg = calculate_monthly_change_table(df_stock)
+        
+        st.dataframe(
+            df_m_chg.style
+            .apply(highlight_max_min, subset=OWNERSHIP_CHG_COLS, axis=1)
+            .format("{:,.0f}", subset=OWNERSHIP_CHG_COLS), 
+            use_container_width=True, 
+            hide_index=True
+        )
 
 # --- TAB 4: SCREENER (FIXED) ---
 with tab4:
@@ -489,15 +549,12 @@ with tab4:
     
     disp_cols = ['Date', 'Code', 'Top_Buyer', 'Top_Buyer_Value_Rp', 'Top_Seller', 'Top_Seller_Value_Rp', 'Price']
     
-    # Rename kolom agar "Rp" ada di header
     rename_map = {
         'Top_Buyer_Value_Rp': 'Value Buyer (Rp)',
         'Top_Seller_Value_Rp': 'Value Seller (Rp)',
         'Price': 'Harga (Rp)'
     }
     df_display_scr = df_scr[disp_cols].rename(columns=rename_map)
-
-    # Format menggunakan Styler agar ada koma
     cols_to_fmt = ['Value Buyer (Rp)', 'Value Seller (Rp)', 'Harga (Rp)']
     
     st.dataframe(
@@ -530,17 +587,13 @@ with tab5:
             
         st.markdown("### 🏆 Top Picks: Big Accumulation")
         
-        # Persiapan Dataframe untuk Display
         df_show = df_accum[['Code', 'Signal', 'Price', 'Price Chg (Window)%', 'Smart Money Flow (Rp)', 'Retail Flow (Rp)', 'Sector']].copy()
-        
-        # Rename Header
         df_show = df_show.rename(columns={
             'Price': 'Harga (Rp)',
             'Smart Money Flow (Rp)': 'Smart Money (Rp)',
             'Retail Flow (Rp)': 'Retail Flow (Rp)'
         })
         
-        # Format Style (Koma Ribuan)
         fmt_cols = ['Harga (Rp)', 'Smart Money (Rp)', 'Retail Flow (Rp)']
         
         st.dataframe(
@@ -552,7 +605,6 @@ with tab5:
         st.markdown("---")
         st.markdown("### 🎯 Divergence Map (Flow vs Price)")
         
-        # Scatter Plot
         fig_scat = px.scatter(
             df_accum, x="Smart Money Flow (Rp)", y="Price Chg (Window)%", 
             color="Sector", size="Price", hover_data=['Code', 'Signal'], text="Code",
@@ -560,11 +612,8 @@ with tab5:
         )
         fig_scat.add_hline(y=0, line_dash="dash", line_color="gray")
         fig_scat.update_traces(textposition='top center')
-        
-        # Format Axis X di Chart (Biar ada komanya juga)
         fig_scat.update_layout(xaxis_tickformat=',.0f')
         fig_scat.update_traces(hovertemplate='<b>%{text}</b><br>Flow: Rp %{x:,.0f}<br>Chg: %{y:.2f}%')
-        
         st.plotly_chart(fig_scat, use_container_width=True)
     else:
         st.warning("Belum ada sinyal yang memenuhi kriteria.")
