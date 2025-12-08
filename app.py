@@ -447,8 +447,7 @@ with tab3:
             total_foreign = last_row.get('Total_Foreign', 0)
             gap_shares = max(0, sec_num - total_local - total_foreign)
             
-            # --- START FIX SUNBURST LABELS ---
-            # Define Base Label Strings (Formatted)
+            # --- LABEL FORMATTING (Jt/M/T) ---
             lbl_total = f"Total\n({format_id_short(sec_num)})"
             lbl_local = f"Lokal\n({format_id_short(total_local)})"
             lbl_foreign = f"Asing\n({format_id_short(total_foreign)})"
@@ -476,7 +475,6 @@ with tab3:
                     labels.append(child_label)
                     parents.append(parent_node)
                     values.append(row['Jumlah Saham'])
-            # --- END FIX ---
             
             fig_sun = go.Figure(go.Sunburst(
                 labels=labels, parents=parents, values=values, 
@@ -489,8 +487,11 @@ with tab3:
             
         with c_bar:
             st.markdown("**Top 5 Holders (Volume)**")
-            top_h = df_state.sort_values('Jumlah Saham', ascending=False).head(5)
-            fig_hbar = px.bar(top_h, x='Jumlah Saham', y='Kategori', orientation='h', text_auto='.2s')
+            top_h = df_state.sort_values('Jumlah Saham', ascending=False).head(5).copy()
+            # Apply formatter
+            top_h['Label'] = top_h['Jumlah Saham'].apply(lambda x: format_id_short(x))
+            
+            fig_hbar = px.bar(top_h, x='Jumlah Saham', y='Kategori', orientation='h', text='Label')
             fig_hbar.update_layout(yaxis={'categoryorder':'total ascending'}, height=400)
             st.plotly_chart(fig_hbar, use_container_width=True)
 
