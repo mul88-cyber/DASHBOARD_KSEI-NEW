@@ -165,11 +165,12 @@ def get_stock_ownership_state(df, stock_code):
     if df_stock.empty:
         return pd.DataFrame(), pd.Series(dtype='object')
     latest_row = df_stock.sort_values('Date').iloc[-1]
+    
+    # Ambil kolom kepemilikan saja
     df_state = latest_row[OWNERSHIP_COLS].reset_index()
     df_state.columns = ['Kategori', 'Jumlah Saham']
-    total = df_state['Jumlah Saham'].sum()
-    df_state['Persentase'] = (df_state['Jumlah Saham'] / total * 100) if total > 0 else 0
-    return df_state.sort_values(by='Jumlah Saham', ascending=False), latest_row
+    
+    return df_state, latest_row
 
 @st.cache_data
 def calculate_monthly_change_table(df_stock):
@@ -350,7 +351,7 @@ with tab2:
             fig_sell.update_layout(yaxis={'categoryorder':'total descending'}, xaxis_tickformat=',.0f')
             st.plotly_chart(fig_sell, use_container_width=True)
 
-# --- TAB 3: INDIVIDUAL (LAYOUT FIXED) ---
+# --- TAB 3: INDIVIDUAL (SUNBURST DISTRIBUTION) ---
 with tab3:
     st.subheader("Deep Dive Saham")
     stocks = sorted(df['Code'].unique())
@@ -368,15 +369,79 @@ with tab3:
         
         st.markdown("---")
         
-        # 2. Pie Chart (Left - Constrained Width)
-        c_pie, c_pad = st.columns([1, 2]) # Ratio 1:2 agar pie chart tidak raksasa
-        with c_pie:
-            st.markdown("**Komposisi Pemegang Saham**")
-            fig_pie = px.pie(df_state, names='Kategori', values='Jumlah Saham', hole=0.4)
-            fig_pie.update_traces(textinfo='percent+label', texttemplate='%{label}<br>%{value:,.0f}')
-            fig_pie.update_layout(margin=dict(t=20, b=20, l=20, r=20))
-            st.plotly_chart(fig_pie, use_container_width=True)
+        # 2. Advanced Distribution Layout (Sunburst + Breakdown)
+        st.markdown("**Peta Distribusi Kepemilikan (Sunburst)**")
+        st.caption("Memvisualisasikan porsi Lokal, Asing, dan Non-Scripless (Warkat/Other) secara hierarkis.")
+        
+        # --- Logic Sunburst: Mengatasi "Not Zero Sum" ---
+        sec_num = last_row.get('Sec. Num', 0)
+        total_local = last_row.get('Total_Local', 0)
+        total_foreign = last_row.get('Total_Foreign', 0)
+        
+        # Hitung Gap (Non-Scripless/Warkat/Locked)
+        recorded_total = total_local + total_foreign
+        gap_shares = max(0, sec_num - recorded_total)
+        
+        # Data untuk Sunburst
+        # Level 0: Total Saham
+        # Level 1: Lokal, Asing, Non-Scripless
+        # Level 2: Detail Kategori (IS, IB, dll)
+        
+        labels = ["Total Saham", "Investor Lokal", "Investor Asing"]
+        parents = ["", "Total Saham", "Total Saham"]
+        values = [sec_num, total_local, total_foreign]
+        
+        # Tambahkan Gap jika signifikan
+        if gap_shares > 0:
+            labels.append("Warkat / Others")
+            parents.append("Total Saham")
+            values.append(gap_shares)
             
+        # Tambahkan Detail Kategori ke Sunburst
+        for index, row in df_state.iterrows():
+            cat_name = row['Kategori']
+            share_val = row['Jumlah Saham']
+            
+            if share_val > 0:
+                parent_group = "Investor Lokal" if "Local" in cat_name else "Investor Asing"
+                # Bersihkan nama untuk display (Hapus 'Local ' / 'Foreign ')
+                display_name = cat_name.replace('Local ', '').replace('Foreign ', '') + f" ({parent_group[9:]})"
+                
+                labels.append(display_name)
+                parents.append(parent_group)
+                values.append(share_val)
+                
+        # Buat Sunburst Chart
+        fig_sun = go.Figure(go.Sunburst(
+            labels=labels,
+            parents=parents,
+            values=values,
+            branchvalues="total",
+            textinfo="label+percent parent",
+            hovertemplate='<b>%{label}</b><br>Shares: %{value:,.0f}<br>%{percentRoot:.1%} of Total<extra></extra>'
+        ))
+        fig_sun.update_layout(margin=dict(t=10, l=10, r=10, b=10), height=500)
+        
+        # Layout Kolom: Sunburst (Kiri) & Top Holders Bar (Kanan)
+        col_sun, col_bar = st.columns([1.5, 1])
+        
+        with col_sun:
+            st.plotly_chart(fig_sun, use_container_width=True)
+            
+        with col_bar:
+            st.markdown("**Top 5 Kategori Pemegang Saham**")
+            top_holders = df_state.sort_values('Jumlah Saham', ascending=False).head(5)
+            fig_hbar = px.bar(top_holders, x='Jumlah Saham', y='Kategori', orientation='h', text_auto='.2s')
+            fig_hbar.update_layout(yaxis={'categoryorder':'total ascending'})
+            st.plotly_chart(fig_hbar, use_container_width=True)
+            
+            st.info(f"""
+            **Ringkasan Struktur:**
+            - **Total Listed:** {sec_num:,.0f} Lembar
+            - **Scripless (Trading):** {recorded_total:,.0f} Lembar
+            - **Warkat/Locked:** {gap_shares:,.0f} Lembar
+            """)
+
         st.markdown("---")
         
         # 3. Table (Bottom - Full Width)
