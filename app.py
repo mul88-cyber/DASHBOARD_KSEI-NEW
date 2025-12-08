@@ -270,7 +270,7 @@ def create_sankey_chart(df, stock_code, selected_date, mode='Volume'):
         
         if val != 0:
             formatted_val = format_id_short(abs(val), is_currency=is_rp)
-            # Label Node: "Foreign IB (2.5 M)"
+            # Label Node: "Foreign IB\n(2.5 M)"
             label_node = f"{cat_name}\n({formatted_val})"
             
             if val < 0:
@@ -313,7 +313,6 @@ def create_sankey_chart(df, stock_code, selected_date, mode='Volume'):
         ),
         link = dict(
             source = source, target = target, value = values, color = link_colors,
-            # Hover tetap detail
             hovertemplate='%{source.label} -> %{target.label}<br>Value: %{value:,.0f}<extra></extra>'
         ))])
 
@@ -387,7 +386,9 @@ with tab1:
     
     st.markdown("**Aliran Dana Kumulatif (Rp)**")
     fig_macro = px.line(df_cum_flow, x='Date', y='Cumulative Flow (Rp)', color='Kategori', title='Akumulasi Net Flow Lokal vs Asing')
+    # Update format Y axis ke koma ribuan
     fig_macro.update_layout(hovermode="x unified", yaxis_tickformat=',.0f')
+    fig_macro.update_traces(hovertemplate='Tanggal: %{x}<br>Flow: %{y:,.0f}')
     st.plotly_chart(fig_macro, use_container_width=True)
     
     c1, c2 = st.columns(2)
@@ -418,7 +419,7 @@ with tab2:
             fig_sell.update_layout(yaxis={'categoryorder':'total descending'}, xaxis_tickformat=',.0f')
             st.plotly_chart(fig_sell, use_container_width=True)
 
-# --- TAB 3: INDIVIDUAL (OPTIMIZED + SANKEY FORMATTED) ---
+# --- TAB 3: INDIVIDUAL (SUNBURST & SANKEY FIX) ---
 with tab3:
     st.subheader("Deep Dive Saham")
     stocks = sorted(df['Code'].unique())
@@ -440,42 +441,42 @@ with tab3:
         c_sun, c_bar = st.columns([1.5, 1])
         with c_sun:
             st.markdown("**Peta Kepemilikan (Sunburst)**")
-            # Logic Sunburst
+            # Logic Sunburst dengan Format
             sec_num = last_row.get('Sec. Num', 0)
             total_local = last_row.get('Total_Local', 0)
             total_foreign = last_row.get('Total_Foreign', 0)
             gap_shares = max(0, sec_num - total_local - total_foreign)
             
-            labels = ["Total", "Lokal", "Asing"]; parents = ["", "Total", "Total"]; values = [sec_num, total_local, total_foreign]
-            # Format Labels untuk Sunburst
-            labels = [
-                f"Total\n({format_id_short(sec_num)})", 
-                f"Lokal\n({format_id_short(total_local)})", 
-                f"Asing\n({format_id_short(total_foreign)})"
-            ]
+            # --- START FIX SUNBURST LABELS ---
+            # Define Base Label Strings (Formatted)
+            lbl_total = f"Total\n({format_id_short(sec_num)})"
+            lbl_local = f"Lokal\n({format_id_short(total_local)})"
+            lbl_foreign = f"Asing\n({format_id_short(total_foreign)})"
             
-            # Tambahkan Data Anak (Detail Kategori)
-            text_labels = ["", "", ""] # Untuk nilai di hover/inside
+            labels = [lbl_total, lbl_local, lbl_foreign]
+            parents = ["", lbl_total, lbl_total] # Parent refers to existing label string!
+            values = [sec_num, total_local, total_foreign]
             
             if gap_shares > 0: 
-                labels.append(f"Warkat\n({format_id_short(gap_shares)})")
-                parents.append(labels[0])
+                lbl_gap = f"Warkat\n({format_id_short(gap_shares)})"
+                labels.append(lbl_gap)
+                parents.append(lbl_total)
                 values.append(gap_shares)
-                text_labels.append(format_id_short(gap_shares))
             
             for index, row in df_state.iterrows():
                 if row['Jumlah Saham'] > 0:
                     cat_name = row['Kategori']
-                    parent_idx = 1 if "Local" in cat_name else 2
-                    parent_name = labels[parent_idx]
+                    # Tentukan Parent berdasarkan nama kategori asli
+                    parent_node = lbl_local if "Local" in cat_name else lbl_foreign
                     
                     disp_name = cat_name.replace('Local ','').replace('Foreign ','')
                     fmt_val = format_id_short(row['Jumlah Saham'])
                     
-                    labels.append(f"{disp_name}\n({fmt_val})")
-                    parents.append(parent_name)
+                    child_label = f"{disp_name}\n({fmt_val})"
+                    labels.append(child_label)
+                    parents.append(parent_node)
                     values.append(row['Jumlah Saham'])
-                    text_labels.append(fmt_val)
+            # --- END FIX ---
             
             fig_sun = go.Figure(go.Sunburst(
                 labels=labels, parents=parents, values=values, 
@@ -495,11 +496,9 @@ with tab3:
 
         st.markdown("---")
         
-        # 3. SANKEY FLOW (NEW FEATURE)
+        # 3. SANKEY FLOW
         st.subheader("🔄 Visualisasi Aliran Dana (Sankey Flow)")
-        
         col_f1, col_f2 = st.columns([1, 4])
-        
         with col_f1:
             st.markdown("##### Filter Flow")
             available_dates = df_stock['Date'].sort_values(ascending=False).dt.strftime('%Y-%m-%d').unique()
@@ -507,7 +506,6 @@ with tab3:
             sel_date_ts = pd.Timestamp(sel_date_str)
             mode_sankey = st.radio("Satuan:", ["Value (Rp)", "Volume (Lembar)"])
             mode_key = 'Value' if 'Rp' in mode_sankey else 'Volume'
-            
         with col_f2:
             fig_sankey = create_sankey_chart(df, sel_stock, sel_date_ts, mode=mode_key)
             if fig_sankey:
@@ -517,10 +515,9 @@ with tab3:
         
         st.markdown("---")
         
-        # 4. Table (Bottom - Full Width)
+        # 4. Table (Bottom)
         st.markdown("### 📅 Detail Perubahan Bulanan (Volume Lembar)")
         df_m_chg = calculate_monthly_change_table(df_stock)
-        
         st.dataframe(
             df_m_chg.style
             .apply(highlight_max_min, subset=OWNERSHIP_CHG_COLS, axis=1)
