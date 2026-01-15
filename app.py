@@ -18,13 +18,13 @@ from googleapiclient.http import MediaIoBaseDownload
 # ⚙️ 2) KONFIGURASI DASHBOARD & G-DRIVE
 # ==============================================================================
 st.set_page_config(
-    page_title="MDM Bandarmology",
+    page_title="KSEI Bandarmology",
     layout="wide",
     page_icon="📊",
     initial_sidebar_state="expanded"
 )
 
-# --- 🔥 FIX CSS (MDM STYLE PROPER - LIGHT THEME) ---
+# --- 🔥 FIX CSS (KSEI STYLE PROPER - LIGHT THEME) ---
 st.markdown("""
 <style>
     /* 1. FORCE LIGHT THEME VARIABLES */
@@ -244,7 +244,7 @@ def format_id_short(value, is_currency=False):
 
 def update_plotly_layout(fig):
     """
-    Apply MDM Style Clean Theme to charts.
+    Apply KSEI Style Clean Theme to charts.
     Forces colors to be dark to prevent 'invisible text' issues.
     """
     fig.update_layout(
