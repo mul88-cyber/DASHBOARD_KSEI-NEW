@@ -7,10 +7,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
 import io
-import traceback
-from datetime import datetime, timedelta
+from datetime import datetime
 
-# Import library Google
+# Import library Google (sesuaikan jika perlu)
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
@@ -25,17 +24,71 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- CUSTOM CSS (MDM APP STYLE: PURPLE & WHITE) ---
+# --- 🔥 FIX CSS (MDM STYLE PROPER) ---
 st.markdown("""
 <style>
-    /* 1. Main Background */
+    /* 1. FORCE LIGHT THEME VARIABLES */
+    :root {
+        --primary-color: #4318FF;
+        --background-color: #F4F7FE;
+        --secondary-background-color: #FFFFFF;
+        --text-color: #2B3674;
+        --font: 'DM Sans', sans-serif;
+    }
+
+    /* 2. Main Background & Text Reset */
     .stApp {
-        background-color: #F4F7FE; /* Light Grey-Blue Background */
-        color: #2B3674; /* Dark Navy Text */
-        font-family: 'DM Sans', sans-serif;
+        background-color: #F4F7FE;
+        color: #2B3674;
     }
     
-    /* 2. Card Styling (White Box with Soft Shadow) */
+    /* 3. Sidebar Styling (Full White & Clean) */
+    [data-testid="stSidebar"] {
+        background-color: #FFFFFF;
+        box-shadow: 14px 14px 40px rgba(112, 144, 176, 0.08);
+        border-right: none;
+    }
+    
+    /* Fix: Memastikan semua teks di sidebar terlihat (Dark Blue) */
+    [data-testid="stSidebar"] p, [data-testid="stSidebar"] label, [data-testid="stSidebar"] span {
+        color: #2B3674 !important;
+        font-weight: 600;
+    }
+    
+    /* 4. Widget Inputs (Selectbox, NumberInput) Styling */
+    /* Mengubah kotak input menjadi putih dengan border halus, bukan kotak hitam */
+    div[data-baseweb="select"] > div, div[data-baseweb="input"] > div {
+        background-color: #FFFFFF !important;
+        border: 1px solid #E0E5F2 !important;
+        color: #2B3674 !important;
+        border-radius: 10px !important;
+    }
+    
+    /* Fix teks di dalam input box agar tidak putih */
+    div[data-baseweb="select"] span, input.st-ac {
+        color: #2B3674 !important;
+    }
+    
+    /* 5. Custom Buttons (Purple Gradient like MDM) */
+    div.stButton > button {
+        background: linear-gradient(90deg, #4318FF 0%, #868CFF 100%);
+        color: white;
+        border: none;
+        border-radius: 12px;
+        padding: 0.5rem 1rem;
+        font-weight: bold;
+        width: 100%;
+        box-shadow: 0px 4px 10px rgba(67, 24, 255, 0.2);
+        transition: all 0.3s ease;
+    }
+    div.stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0px 8px 15px rgba(67, 24, 255, 0.3);
+        border: none;
+        color: white;
+    }
+
+    /* 6. Card Styling (White Box with Soft Shadow) */
     .css-card {
         background-color: #FFFFFF;
         border-radius: 20px;
@@ -45,7 +98,7 @@ st.markdown("""
         border: none;
     }
     
-    /* 3. Header Banner (Purple Gradient) */
+    /* 7. Header Banner (Purple Gradient) */
     .header-banner {
         background: linear-gradient(86.88deg, #4318FF 0%, #868CFF 100%);
         border-radius: 20px;
@@ -54,70 +107,32 @@ st.markdown("""
         margin-bottom: 30px;
         box-shadow: 0px 18px 40px rgba(112, 144, 176, 0.2);
     }
+    .header-title { font-size: 32px; font-weight: 700; margin-bottom: 8px; }
+    .header-subtitle { font-size: 16px; font-weight: 500; opacity: 0.9; }
     
-    .header-title {
-        font-size: 32px;
-        font-weight: 700;
-        margin-bottom: 8px;
-    }
-    
-    .header-subtitle {
-        font-size: 16px;
-        font-weight: 500;
-        opacity: 0.9;
-    }
-    
-    /* 4. Sidebar Styling */
-    [data-testid="stSidebar"] {
-        background-color: #FFFFFF;
-        border-right: none;
-        box-shadow: 4px 0px 30px rgba(112, 144, 176, 0.08);
-    }
-    
-    /* 5. Metrics & Text */
-    div[data-testid="stMetricValue"] {
-        font-size: 28px;
-        font-weight: 700;
-        color: #2B3674;
-    }
-    
-    div[data-testid="stMetricLabel"] {
-        font-size: 14px;
-        color: #A3AED0;
-        font-weight: 500;
-    }
-    
-    .card-title {
-        font-size: 20px;
-        font-weight: 700;
-        color: #2B3674;
-        margin-bottom: 20px;
-    }
-    
-    /* 6. Tabs Customization */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 20px;
-        background-color: transparent;
-        border-bottom: 1px solid #E0E5F2;
-    }
-    
-    .stTabs [data-baseweb="tab"] {
-        background-color: transparent;
-        border: none;
-        color: #A3AED0;
-        font-weight: 500;
-        padding-bottom: 12px;
-    }
-    
-    .stTabs [data-baseweb="tab"][aria-selected="true"] {
-        color: #4318FF;
-        font-weight: 700;
-        border-bottom: 3px solid #4318FF;
+    /* 8. Fix Label Visibility Globally */
+    label {
+        color: #2B3674 !important;
+        font-size: 14px !important;
+        font-weight: 600 !important;
     }
 
-    /* Helper Colors */
-    .text-success { color: #05CD99; font-weight: bold; }
-    .text-danger { color: #EE5D50; font-weight: bold; }
+    /* 9. Metric Cards Clean up */
+    div[data-testid="stMetricValue"] {
+        color: #2B3674 !important;
+        font-weight: 700;
+    }
+    div[data-testid="stMetricLabel"] {
+        color: #A3AED0 !important;
+    }
+    
+    /* 10. Table/Dataframe Styling */
+    div[data-testid="stDataFrame"] {
+        background-color: white;
+        padding: 10px;
+        border-radius: 15px;
+        box-shadow: 0px 5px 15px rgba(0,0,0,0.05);
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -208,7 +223,7 @@ def load_data():
         return pd.DataFrame(), f"❌ Error: {e}", "error"
 
 # ==============================================================================
-# 🛠️ 4) HELPER FUNCTIONS
+# 🛠️ 4) HELPER FUNCTIONS (UPDATED VISUALS)
 # ==============================================================================
 
 def format_id_short(value, is_currency=False):
@@ -225,18 +240,37 @@ def format_id_short(value, is_currency=False):
     return f"{prefix}{formatted}{suffix}"
 
 def update_plotly_layout(fig):
-    """Apply MDM Style Clean Theme to charts."""
+    """
+    Apply MDM Style Clean Theme to charts.
+    Forces colors to be dark to prevent 'invisible text' issues.
+    """
     fig.update_layout(
+        template='plotly_white', # 🔥 Kunci agar chart base-nya putih
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
         font=dict(color='#2B3674', family='DM Sans'), # Dark Navy Text
-        xaxis=dict(gridcolor='#E0E5F2', showgrid=True), 
-        yaxis=dict(gridcolor='#E0E5F2', showgrid=True),
-        margin=dict(t=40, l=10, r=10, b=10)
+        xaxis=dict(
+            gridcolor='#E0E5F2', 
+            showgrid=True,
+            tickfont=dict(color='#A3AED0') # Warna text sumbu X abu2 soft
+        ), 
+        yaxis=dict(
+            gridcolor='#E0E5F2', 
+            showgrid=True,
+            tickfont=dict(color='#A3AED0')
+        ),
+        margin=dict(t=40, l=10, r=10, b=10),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        )
     )
     return fig
 
-# --- LOGIC CALCULATION FUNCTIONS ---
+# --- LOGIC CALCULATION FUNCTIONS (KEPT SAME) ---
 @st.cache_data
 def calculate_macro_flow(df_filtered):
     net_flow = df_filtered[OWNERSHIP_CHG_RP_COLS].sum().reset_index()
@@ -301,13 +335,10 @@ def calculate_smart_money_signals(df_year, window_periods=3, min_acc_threshold=5
     if not df_res.empty: df_res = df_res.sort_values('Smart Money (Rp)', ascending=False)
     return df_res
 
-# --- 🟢 FIX LOGIC ERROR HERE ---
 @st.cache_data
 def get_significant_movements(df_month, threshold_rp=10e9, threshold_pct=5):
     if df_month.empty: return pd.DataFrame()
     results = []
-    
-    # Pre-calculate column names to iterate
     available_rp_cols = [c for c in OWNERSHIP_CHG_RP_COLS if c in df_month.columns]
 
     for code in df_month['Code'].unique():
@@ -320,30 +351,18 @@ def get_significant_movements(df_month, threshold_rp=10e9, threshold_pct=5):
         if abs_flow >= threshold_rp or pct >= threshold_pct:
             direction = "NET BUY" if net_flow > 0 else "NET SELL" if net_flow < 0 else "NEUTRAL"
             
-            # --- FIX: FIND TOP BUYER & SELLER ---
-            # Get values for all categories
             vals = {c.replace('_chg_Rp', ''): row[c] for c in available_rp_cols}
-            # Find max (Buyer) and min (Seller)
-            top_b_cat = max(vals, key=vals.get)
-            top_s_cat = min(vals, key=vals.get)
+            top_b_cat = max(vals, key=vals.get) if vals else "-"
+            top_s_cat = min(vals, key=vals.get) if vals else "-"
             
-            top_b_val = vals[top_b_cat]
-            top_s_val = vals[top_s_cat]
-            
-            # Only record if meaningful (> 0 for buyer, < 0 for seller)
-            buyer_str = f"{top_b_cat}" if top_b_val > 0 else "-"
-            seller_str = f"{top_s_cat}" if top_s_val < 0 else "-"
+            # Logic: Hanya tampilkan jika top buyer positif / top seller negatif
+            buyer_str = f"{top_b_cat}" if vals[top_b_cat] > 0 else "-"
+            seller_str = f"{top_s_cat}" if vals[top_s_cat] < 0 else "-"
 
             results.append({
-                'Code': code, 
-                'Sector': row.get('Sector','N/A'), 
-                'Price': row.get('Price',0),
-                'Total Flow (Rp)': abs_flow, 
-                'Net Flow (Rp)': net_flow, 
-                'Flow %': pct, 
-                'Direction': direction,
-                'Top_Buyer': buyer_str,   # <--- Added
-                'Top_Seller': seller_str  # <--- Added
+                'Code': code, 'Sector': row.get('Sector','N/A'), 'Price': row.get('Price',0),
+                'Total Flow (Rp)': abs_flow, 'Net Flow (Rp)': net_flow, 'Flow %': pct, 
+                'Direction': direction, 'Top_Buyer': buyer_str, 'Top_Seller': seller_str
             })
     
     df_res = pd.DataFrame(results)
@@ -371,7 +390,7 @@ def create_sankey_chart(df, stock_code, selected_date, mode='Volume'):
     if not sellers and not buyers: return None
     
     labels = [f"MARKET\n({format_id_short(total_vol, is_rp)})"] + [s['l'] for s in sellers] + [b['l'] for b in buyers]
-    colors = ["#A3AED0"] + ["#EE5D50"]*len(sellers) + ["#05CD99"]*len(buyers) 
+    colors = ["#E0E5F2"] + ["#EE5D50"]*len(sellers) + ["#05CD99"]*len(buyers) 
     
     source = list(range(1, len(sellers)+1)) + [0]*len(buyers)
     target = [0]*len(sellers) + list(range(len(sellers)+1, len(labels)))
@@ -381,20 +400,21 @@ def create_sankey_chart(df, stock_code, selected_date, mode='Volume'):
         node=dict(pad=20, thickness=15, line=dict(color="white", width=0.5), label=labels, color=colors),
         link=dict(source=source, target=target, value=values, color=['rgba(238, 93, 80, 0.4)']*len(sellers) + ['rgba(5, 205, 153, 0.4)']*len(buyers))
     )])
-    fig.update_layout(title_text=f"Arus Dana {stock_code} ({selected_date.strftime('%b %Y')}) - {mode}", font_size=12, height=500)
+    fig.update_layout(title_text=f"Arus Dana {stock_code} ({selected_date.strftime('%b %Y')}) - {mode}", font_size=14, height=500)
     return update_plotly_layout(fig)
 
 # ==============================================================================
 # 💎 5) LAYOUT UTAMA & SIDEBAR
 # ==============================================================================
 
-# --- SIDEBAR ---
+# --- SIDEBAR (Updated Look) ---
 with st.sidebar:
+    # Logo Placeholder
     st.image("https://cdn-icons-png.flaticon.com/512/2910/2910312.png", width=50)
-    st.markdown("<h2 style='color:#2B3674;'>Bandarmology</h2>", unsafe_allow_html=True)
+    st.markdown("<h3 style='color:#2B3674; margin-top:0;'>Bandarmology</h3>", unsafe_allow_html=True)
     st.divider()
 
-    st.caption("Global Controls")
+    st.markdown("##### Global Controls")
     if st.button("🔄 Reload Data", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
@@ -416,7 +436,7 @@ with st.sidebar:
         threshold_rp = st.number_input("Min Flow (Rp)", value=10_000_000_000, step=1_000_000_000, format="%d")
         min_rotation = st.number_input("Min Rotation (Rp)", value=1_000_000_000, step=500_000_000, format="%d")
 
-# --- MAIN PAGE HEADER (MDM Style) ---
+# --- MAIN PAGE HEADER (Purple Gradient) ---
 st.markdown(f"""
     <div class="header-banner">
         <div class="header-title">Welcome, Stock Analyzers! 👋</div>
