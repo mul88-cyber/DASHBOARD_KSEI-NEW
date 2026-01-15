@@ -19,82 +19,105 @@ from googleapiclient.http import MediaIoBaseDownload
 # ⚙️ 2) KONFIGURASI DASHBOARD & G-DRIVE
 # ==============================================================================
 st.set_page_config(
-    page_title="Bandarmology Pro Dashboard",
+    page_title="MDM Bandarmology",
     layout="wide",
-    page_icon="🌊",
+    page_icon="📊",
     initial_sidebar_state="expanded"
 )
 
-# --- CUSTOM CSS (LIGHT MODE / CLEAN UI) ---
+# --- CUSTOM CSS (MDM APP STYLE: PURPLE & WHITE) ---
 st.markdown("""
 <style>
-    /* Main Background - Light Grey Standard Streamlit */
+    /* 1. Main Background */
     .stApp {
-        background-color: #f0f2f6;
-        color: #31333F;
+        background-color: #F4F7FE; /* Light Grey-Blue Background */
+        color: #2B3674; /* Dark Navy Text */
+        font-family: 'DM Sans', sans-serif;
     }
     
-    /* Card Container Styling - White Box */
+    /* 2. Card Styling (White Box with Soft Shadow) */
     .css-card {
-        background-color: #ffffff;
-        border-radius: 12px;
-        padding: 20px;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05); /* Soft shadow */
-        margin-bottom: 20px;
-        border: 1px solid #e0e0e0;
+        background-color: #FFFFFF;
+        border-radius: 20px;
+        padding: 24px;
+        box-shadow: 0px 18px 40px rgba(112, 144, 176, 0.12);
+        margin-bottom: 24px;
+        border: none;
     }
     
-    /* Metrics Customization */
+    /* 3. Header Banner (Purple Gradient) */
+    .header-banner {
+        background: linear-gradient(86.88deg, #4318FF 0%, #868CFF 100%);
+        border-radius: 20px;
+        padding: 30px 40px;
+        color: white;
+        margin-bottom: 30px;
+        box-shadow: 0px 18px 40px rgba(112, 144, 176, 0.2);
+    }
+    
+    .header-title {
+        font-size: 32px;
+        font-weight: 700;
+        margin-bottom: 8px;
+    }
+    
+    .header-subtitle {
+        font-size: 16px;
+        font-weight: 500;
+        opacity: 0.9;
+    }
+    
+    /* 4. Sidebar Styling */
+    [data-testid="stSidebar"] {
+        background-color: #FFFFFF;
+        border-right: none;
+        box-shadow: 4px 0px 30px rgba(112, 144, 176, 0.08);
+    }
+    
+    /* 5. Metrics & Text */
     div[data-testid="stMetricValue"] {
-        font-size: 24px;
-        color: #31333F; /* Dark Text */
+        font-size: 28px;
+        font-weight: 700;
+        color: #2B3674;
     }
     
     div[data-testid="stMetricLabel"] {
-        color: #606060;
+        font-size: 14px;
+        color: #A3AED0;
+        font-weight: 500;
     }
     
-    /* Tabs Customization */
+    .card-title {
+        font-size: 20px;
+        font-weight: 700;
+        color: #2B3674;
+        margin-bottom: 20px;
+    }
+    
+    /* 6. Tabs Customization */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 10px;
+        gap: 20px;
+        background-color: transparent;
+        border-bottom: 1px solid #E0E5F2;
     }
+    
     .stTabs [data-baseweb="tab"] {
-        background-color: #ffffff;
-        border-radius: 8px 8px 0 0;
-        padding: 10px 20px;
-        color: #555;
-        border: 1px solid #ddd;
-        border-bottom: none;
+        background-color: transparent;
+        border: none;
+        color: #A3AED0;
+        font-weight: 500;
+        padding-bottom: 12px;
     }
+    
     .stTabs [data-baseweb="tab"][aria-selected="true"] {
-        background-color: #ffffff;
-        color: #007bff; /* Blue Highlight */
-        border-top: 3px solid #007bff;
-        font-weight: bold;
+        color: #4318FF;
+        font-weight: 700;
+        border-bottom: 3px solid #4318FF;
     }
-    
-    /* Sidebar Styling */
-    [data-testid="stSidebar"] {
-        background-color: #ffffff;
-        border-right: 1px solid #e6e6e6;
-    }
-    
-    /* Custom Header for Cards */
-    .card-header {
-        font-size: 18px;
-        font-weight: 600;
-        color: #1f2937; /* Dark Slate */
-        margin-bottom: 15px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        border-bottom: 1px solid #eee;
-        padding-bottom: 8px;
-    }
-    
-    /* Helper colors */
-    .text-green { color: #00a86b; font-weight: bold; }
-    .text-red { color: #e02424; font-weight: bold; }
+
+    /* Helper Colors */
+    .text-success { color: #05CD99; font-weight: bold; }
+    .text-danger { color: #EE5D50; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -202,13 +225,13 @@ def format_id_short(value, is_currency=False):
     return f"{prefix}{formatted}{suffix}"
 
 def update_plotly_layout(fig):
-    """Apply Clean Light Theme to charts."""
+    """Apply MDM Style Clean Theme to charts."""
     fig.update_layout(
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
-        font=dict(color='#31333F'), # Dark Text
-        xaxis=dict(gridcolor='#e6e6e6', showgrid=True), # Light grid
-        yaxis=dict(gridcolor='#e6e6e6', showgrid=True),
+        font=dict(color='#2B3674', family='DM Sans'), # Dark Navy Text
+        xaxis=dict(gridcolor='#E0E5F2', showgrid=True), 
+        yaxis=dict(gridcolor='#E0E5F2', showgrid=True),
         margin=dict(t=40, l=10, r=10, b=10)
     )
     return fig
@@ -278,22 +301,49 @@ def calculate_smart_money_signals(df_year, window_periods=3, min_acc_threshold=5
     if not df_res.empty: df_res = df_res.sort_values('Smart Money (Rp)', ascending=False)
     return df_res
 
+# --- 🟢 FIX LOGIC ERROR HERE ---
 @st.cache_data
 def get_significant_movements(df_month, threshold_rp=10e9, threshold_pct=5):
     if df_month.empty: return pd.DataFrame()
     results = []
+    
+    # Pre-calculate column names to iterate
+    available_rp_cols = [c for c in OWNERSHIP_CHG_RP_COLS if c in df_month.columns]
+
     for code in df_month['Code'].unique():
         row = df_month[df_month['Code'] == code].iloc[0]
-        abs_flow = sum(abs(row[c]) for c in OWNERSHIP_CHG_RP_COLS if c in row)
+        abs_flow = sum(abs(row[c]) for c in available_rp_cols)
         net_flow = row.get('Total_chg_Rp', 0)
         shares = row.get('Sec. Num', 1)
         pct = (abs_flow / shares * 100) if shares > 0 else 0
         
         if abs_flow >= threshold_rp or pct >= threshold_pct:
             direction = "NET BUY" if net_flow > 0 else "NET SELL" if net_flow < 0 else "NEUTRAL"
+            
+            # --- FIX: FIND TOP BUYER & SELLER ---
+            # Get values for all categories
+            vals = {c.replace('_chg_Rp', ''): row[c] for c in available_rp_cols}
+            # Find max (Buyer) and min (Seller)
+            top_b_cat = max(vals, key=vals.get)
+            top_s_cat = min(vals, key=vals.get)
+            
+            top_b_val = vals[top_b_cat]
+            top_s_val = vals[top_s_cat]
+            
+            # Only record if meaningful (> 0 for buyer, < 0 for seller)
+            buyer_str = f"{top_b_cat}" if top_b_val > 0 else "-"
+            seller_str = f"{top_s_cat}" if top_s_val < 0 else "-"
+
             results.append({
-                'Code': code, 'Sector': row.get('Sector','N/A'), 'Price': row.get('Price',0),
-                'Total Flow (Rp)': abs_flow, 'Net Flow (Rp)': net_flow, 'Flow %': pct, 'Direction': direction
+                'Code': code, 
+                'Sector': row.get('Sector','N/A'), 
+                'Price': row.get('Price',0),
+                'Total Flow (Rp)': abs_flow, 
+                'Net Flow (Rp)': net_flow, 
+                'Flow %': pct, 
+                'Direction': direction,
+                'Top_Buyer': buyer_str,   # <--- Added
+                'Top_Seller': seller_str  # <--- Added
             })
     
     df_res = pd.DataFrame(results)
@@ -321,15 +371,15 @@ def create_sankey_chart(df, stock_code, selected_date, mode='Volume'):
     if not sellers and not buyers: return None
     
     labels = [f"MARKET\n({format_id_short(total_vol, is_rp)})"] + [s['l'] for s in sellers] + [b['l'] for b in buyers]
-    colors = ["#cfd8dc"] + ["#ff8a80"]*len(sellers) + ["#b9f6ca"]*len(buyers) # Lighter colors for sankey
+    colors = ["#A3AED0"] + ["#EE5D50"]*len(sellers) + ["#05CD99"]*len(buyers) 
     
     source = list(range(1, len(sellers)+1)) + [0]*len(buyers)
     target = [0]*len(sellers) + list(range(len(sellers)+1, len(labels)))
     values = [s['v'] for s in sellers] + [b['v'] for b in buyers]
     
     fig = go.Figure(data=[go.Sankey(
-        node=dict(pad=20, thickness=15, line=dict(color="gray", width=0.5), label=labels, color=colors),
-        link=dict(source=source, target=target, value=values, color=['rgba(255, 138, 128, 0.4)']*len(sellers) + ['rgba(185, 246, 202, 0.4)']*len(buyers))
+        node=dict(pad=20, thickness=15, line=dict(color="white", width=0.5), label=labels, color=colors),
+        link=dict(source=source, target=target, value=values, color=['rgba(238, 93, 80, 0.4)']*len(sellers) + ['rgba(5, 205, 153, 0.4)']*len(buyers))
     )])
     fig.update_layout(title_text=f"Arus Dana {stock_code} ({selected_date.strftime('%b %Y')}) - {mode}", font_size=12, height=500)
     return update_plotly_layout(fig)
@@ -341,11 +391,10 @@ def create_sankey_chart(df, stock_code, selected_date, mode='Volume'):
 # --- SIDEBAR ---
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2910/2910312.png", width=50)
-    st.title("Bandarmology Pro")
-    st.caption("Mode: Light Theme ☀️")
+    st.markdown("<h2 style='color:#2B3674;'>Bandarmology</h2>", unsafe_allow_html=True)
     st.divider()
 
-    st.subheader("Global Filter")
+    st.caption("Global Controls")
     if st.button("🔄 Reload Data", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
@@ -363,22 +412,15 @@ with st.sidebar:
     df_filtered_month = df[df['Date'].dt.strftime('%Y-%m') == selected_month_str]
 
     st.divider()
-    with st.expander("⚙️ Advanced Thresholds"):
+    with st.expander("⚙️ Advanced Filter"):
         threshold_rp = st.number_input("Min Flow (Rp)", value=10_000_000_000, step=1_000_000_000, format="%d")
         min_rotation = st.number_input("Min Rotation (Rp)", value=1_000_000_000, step=500_000_000, format="%d")
 
-# --- MAIN PAGE HEADER ---
+# --- MAIN PAGE HEADER (MDM Style) ---
 st.markdown(f"""
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-        <div>
-            <h1 style="margin:0; color:#1f2937;">Dashboard Analisis Aliran Dana</h1>
-            <p style="color: #6b7280; margin:0;">Periode Aktif: <b>{selected_month.strftime('%B %Y')}</b> • {len(df_filtered_month)} Emiten Terpantau</p>
-        </div>
-        <div style="text-align: right;">
-            <span style="background: #e0f2fe; color: #0369a1; padding: 8px 16px; border-radius: 20px; font-size: 14px; font-weight: bold;">
-                🟢 Data Active
-            </span>
-        </div>
+    <div class="header-banner">
+        <div class="header-title">Welcome, Stock Analyzers! 👋</div>
+        <div class="header-subtitle">Monitor dan analisis pergerakan bandar periode <b>{selected_month.strftime('%B %Y')}</b></div>
     </div>
 """, unsafe_allow_html=True)
 
@@ -386,7 +428,7 @@ st.markdown(f"""
 # 📑 TABS VISUALISASI
 # ==============================================================================
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "🌍 Makro", "🏭 Sektor", "📈 Saham", "🔍 Screener", "🤖 AI Signals", "🔥 Hot Movers"
+    "🌍 Market Overview", "🏭 Sector Rotation", "📈 Deep Dive", "🔍 Big Screener", "🤖 Smart Signals", "🔥 Top Movers"
 ])
 
 # --- TAB 1: MAKRO ---
@@ -396,21 +438,21 @@ with tab1:
     df_net, df_cum = calculate_macro_flow(df)
     
     with col_m1:
-        st.markdown('<div class="css-card"><div class="card-header">📊 Akumulasi Flow YTD (Lokal vs Asing)</div>', unsafe_allow_html=True)
+        st.markdown('<div class="css-card"><div class="card-title">📊 Cumulative Flow YTD (Rp)</div>', unsafe_allow_html=True)
         fig_macro = px.line(df_cum, x='Date', y='Cumulative Flow (Rp)', color='Kategori', 
-                           color_discrete_map={'Total_Local (Net Rp)': '#00a86b', 'Total_Foreign (Net Rp)': '#e02424'})
+                           color_discrete_map={'Total_Local (Net Rp)': '#05CD99', 'Total_Foreign (Net Rp)': '#EE5D50'})
         st.plotly_chart(update_plotly_layout(fig_macro), use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
     with col_m2:
-        st.markdown('<div class="css-card"><div class="card-header">🏆 Top Player Net Buy (YTD)</div>', unsafe_allow_html=True)
-        fig_buy = px.bar(df_net.head(7), x='Total Net Flow (Rp)', y='Kategori', orientation='h', color_discrete_sequence=['#00a86b'])
+        st.markdown('<div class="css-card"><div class="card-title">🏆 Top Net Buy (YTD)</div>', unsafe_allow_html=True)
+        fig_buy = px.bar(df_net.head(7), x='Total Net Flow (Rp)', y='Kategori', orientation='h', color_discrete_sequence=['#05CD99'])
         fig_buy.update_layout(height=300, yaxis={'categoryorder':'total ascending'})
         st.plotly_chart(update_plotly_layout(fig_buy), use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
         
-        st.markdown('<div class="css-card"><div class="card-header">🔻 Top Player Net Sell (YTD)</div>', unsafe_allow_html=True)
-        fig_sell = px.bar(df_net.tail(7), x='Total Net Flow (Rp)', y='Kategori', orientation='h', color_discrete_sequence=['#e02424'])
+        st.markdown('<div class="css-card"><div class="card-title">🔻 Top Net Sell (YTD)</div>', unsafe_allow_html=True)
+        fig_sell = px.bar(df_net.tail(7), x='Total Net Flow (Rp)', y='Kategori', orientation='h', color_discrete_sequence=['#EE5D50'])
         fig_sell.update_layout(height=300, yaxis={'categoryorder':'total descending'})
         st.plotly_chart(update_plotly_layout(fig_sell), use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
@@ -420,7 +462,7 @@ with tab2:
     col_sel, col_chart = st.columns([1, 4])
     with col_sel:
         st.markdown('<div class="css-card">', unsafe_allow_html=True)
-        st.markdown("#### Filter Analisis")
+        st.markdown('<div class="card-title">Filter</div>', unsafe_allow_html=True)
         cats = sorted([c.replace('_chg_Rp','') for c in OWNERSHIP_CHG_RP_COLS])
         sel_cat = st.selectbox("Pilih Investor:", cats, index=cats.index('Foreign IB') if 'Foreign IB' in cats else 0)
         df_sec, _ = calculate_sector_rotation(df_filtered_month, sel_cat)
@@ -429,7 +471,7 @@ with tab2:
         
     with col_chart:
         if not df_sec.empty:
-            st.markdown(f'<div class="css-card"><div class="card-header">Rotasi Sektor oleh {sel_cat} ({selected_month_str})</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="css-card"><div class="card-title">Rotasi Sektor {sel_cat} ({selected_month_str})</div>', unsafe_allow_html=True)
             fig_sec = px.bar(df_sec, x='Net Flow (Rp)', y='Sector', orientation='h', 
                              color='Net Flow (Rp)', color_continuous_scale='RdYlGn')
             fig_sec.update_layout(height=600, yaxis={'categoryorder':'total ascending'})
@@ -456,26 +498,26 @@ with tab3:
     # 1. KPI Cards
     k1, k2, k3, k4 = st.columns(4)
     k1.markdown(f"""<div class="css-card" style="text-align:center;">
-        <div style="font-size:14px; color:#888;">Harga Terakhir</div>
-        <div style="font-size:24px; font-weight:bold; color:#1f2937;">Rp {last_row['Price']:,.0f}</div>
+        <div style="font-size:14px; color:#A3AED0;">Harga Terakhir</div>
+        <div style="font-size:24px; font-weight:700; color:#2B3674;">Rp {last_row['Price']:,.0f}</div>
     </div>""", unsafe_allow_html=True)
     
     flow_val = last_row.get('Total_chg_Rp',0)
-    flow_color = '#00a86b' if flow_val > 0 else '#e02424'
+    flow_color = '#05CD99' if flow_val > 0 else '#EE5D50'
     
     k2.markdown(f"""<div class="css-card" style="text-align:center;">
-        <div style="font-size:14px; color:#888;">Flow {selected_month_str}</div>
-        <div style="font-size:24px; font-weight:bold; color: {flow_color};">
+        <div style="font-size:14px; color:#A3AED0;">Flow {selected_month_str}</div>
+        <div style="font-size:24px; font-weight:700; color: {flow_color};">
             {format_id_short(flow_val, True)}
         </div>
     </div>""", unsafe_allow_html=True)
     k3.markdown(f"""<div class="css-card" style="text-align:center;">
-        <div style="font-size:14px; color:#888;">Top Buyer</div>
-        <div style="font-size:18px; font-weight:bold; color:#1f2937;">{last_row.get('Top_Buyer','-')}</div>
+        <div style="font-size:14px; color:#A3AED0;">Top Buyer</div>
+        <div style="font-size:18px; font-weight:700; color:#2B3674;">{last_row.get('Top_Buyer','-')}</div>
     </div>""", unsafe_allow_html=True)
     k4.markdown(f"""<div class="css-card" style="text-align:center;">
-        <div style="font-size:14px; color:#888;">Sektor</div>
-        <div style="font-size:18px; font-weight:bold; color:#1f2937;">{last_row.get('Sector','-')}</div>
+        <div style="font-size:14px; color:#A3AED0;">Sektor</div>
+        <div style="font-size:18px; font-weight:700; color:#2B3674;">{last_row.get('Sector','-')}</div>
     </div>""", unsafe_allow_html=True)
 
     # 2. Main Content
@@ -496,34 +538,25 @@ with tab3:
         st.markdown('</div>', unsafe_allow_html=True)
 
     with c_hist:
-        st.markdown('<div class="css-card"><div class="card-header">📅 Riwayat Bulanan</div>', unsafe_allow_html=True)
+        st.markdown('<div class="css-card"><div class="card-title">📅 Monthly History</div>', unsafe_allow_html=True)
         df_hist = calculate_monthly_change_table(df_stock_all)
         
-        # FIX ERROR MATPLOTLIB: Try-Except Block
         try:
-            # Jika user sudah install matplotlib, pakai gradient
             st.dataframe(
                 df_hist.style.format("{:,.0f}", subset=OWNERSHIP_CHG_COLS)
                 .background_gradient(cmap='RdYlGn', subset=OWNERSHIP_CHG_COLS, axis=1),
-                use_container_width=True,
-                hide_index=True,
-                height=450
+                use_container_width=True, hide_index=True, height=450
             )
-        except Exception:
-            # Fallback jika matplotlib tidak ada
-            st.warning("⚠️ Install 'matplotlib' untuk melihat warna gradasi.")
+        except:
             st.dataframe(
                 df_hist.style.format("{:,.0f}", subset=OWNERSHIP_CHG_COLS),
-                use_container_width=True,
-                hide_index=True,
-                height=450
+                use_container_width=True, hide_index=True, height=450
             )
-            
         st.markdown('</div>', unsafe_allow_html=True)
 
 # --- TAB 4: SCREENER ---
 with tab4:
-    st.markdown(f'<div class="css-card"><div class="card-header">🔍 Big Rotation Screener ({selected_month_str})</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="css-card"><div class="card-title">🔍 Big Rotation Screener ({selected_month_str})</div>', unsafe_allow_html=True)
     
     df_scr = df_filtered_month.copy()
     if not df_scr.empty:
@@ -536,7 +569,7 @@ with tab4:
             
             st.dataframe(
                 disp.style.format("{:,.0f}", subset=['Buy Val', 'Sell Val', 'Net Flow'])
-                .bar(subset=['Net Flow'], align='mid', color=['#e02424', '#00a86b']),
+                .bar(subset=['Net Flow'], align='mid', color=['#EE5D50', '#05CD99']),
                 use_container_width=True, hide_index=True, height=600
             )
         else:
@@ -550,7 +583,7 @@ with tab5:
     col_ai_filt, col_ai_res = st.columns([1, 3])
     with col_ai_filt:
         st.markdown('<div class="css-card">', unsafe_allow_html=True)
-        st.markdown("#### Parameter AI")
+        st.markdown('<div class="card-title">Parameters</div>', unsafe_allow_html=True)
         win = st.slider("Window (Bulan)", 1, 6, 3)
         min_acc = st.number_input("Min Akumulasi (Miliar)", 5.0, 100.0, 5.0) * 1e9
         sec_filter = st.selectbox("Sektor", ["All"] + sorted(df['Sector'].unique().tolist()))
@@ -563,13 +596,12 @@ with tab5:
         if not df_sig.empty:
             if sec_filter != "All": df_sig = df_sig[df_sig['Sector'] == sec_filter]
             
-            st.markdown(f'<div class="css-card"><div class="card-header">💎 Sinyal Terdeteksi ({len(df_sig)})</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="css-card"><div class="card-title">💎 Smart Money Signals ({len(df_sig)})</div>', unsafe_allow_html=True)
             
             def color_sig(val):
-                # Light mode friendly colors
-                c = '#856404' if 'Accumulation' in val else '#0c5460' if 'Divergence' in val else '#721c24'
-                bg = '#fff3cd' if 'Accumulation' in val else '#d1ecf1' if 'Divergence' in val else '#f8d7da'
-                return f'color: {c}; background-color: {bg}; font-weight: bold;'
+                c = '#B78202' if 'Accumulation' in val else '#027A9B' if 'Divergence' in val else '#A61021'
+                bg = '#FFF8E1' if 'Accumulation' in val else '#E1F5FE' if 'Divergence' in val else '#FFEBEE'
+                return f'color: {c}; background-color: {bg}; font-weight: 700;'
 
             st.dataframe(
                 df_sig.style.format({'Price': '{:,.0f}', 'Price Chg %': '{:.2f}%', 'Smart Money (Rp)': '{:,.0f}', 'Retail (Rp)': '{:,.0f}'})
@@ -580,7 +612,7 @@ with tab5:
             # Scatter Plot
             fig_scat = px.scatter(df_sig, x='Smart Money (Rp)', y='Price Chg %', color='Signal', 
                                   size='Price', hover_data=['Code'], text='Code',
-                                  color_discrete_map={'🔥 Big Accumulation': '#ffc107', '💎 Divergence': '#17a2b8', '⚠️ Distribution': '#dc3545'})
+                                  color_discrete_map={'🔥 Big Accumulation': '#FFB547', '💎 Divergence': '#4318FF', '⚠️ Distribution': '#EE5D50'})
             st.plotly_chart(update_plotly_layout(fig_scat), use_container_width=True)
             st.markdown('</div>', unsafe_allow_html=True)
         else:
@@ -591,7 +623,7 @@ with tab6:
     st.markdown('<div class="css-card">', unsafe_allow_html=True)
     col_h1, col_h2 = st.columns([3, 1])
     with col_h1:
-        st.markdown(f"<h3 style='margin:0; color:#1f2937;'>Pergerakan Signifikan: {selected_month_str}</h3>", unsafe_allow_html=True)
+        st.markdown(f"<div class='card-title'>Pergerakan Signifikan: {selected_month_str}</div>", unsafe_allow_html=True)
     with col_h2:
         threshold_pct_tab6 = st.number_input("Threshold % Saham", 0.1, 20.0, 5.0, 0.5)
 
@@ -601,17 +633,17 @@ with tab6:
         # Top Movers Chart
         top10 = df_hot.head(10)
         fig_hot = px.bar(top10, x='Code', y='Total Flow (Rp)', color='Direction',
-                         color_discrete_map={'NET BUY': '#00a86b', 'NET SELL': '#e02424'},
+                         color_discrete_map={'NET BUY': '#05CD99', 'NET SELL': '#EE5D50'},
                          text='Flow %')
         fig_hot.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
         fig_hot.update_layout(height=400)
         st.plotly_chart(update_plotly_layout(fig_hot), use_container_width=True)
         
-        # Detail Table
+        # Detail Table with FIXED LOGIC
         st.dataframe(
             df_hot[['Code', 'Sector', 'Price', 'Total Flow (Rp)', 'Direction', 'Top_Buyer', 'Top_Seller']]
             .style.format("{:,.0f}", subset=['Price', 'Total Flow (Rp)'])
-            .applymap(lambda v: f'color: {"#00a86b" if v=="NET BUY" else "#e02424" if v=="NET SELL" else "#555"}', subset=['Direction']),
+            .applymap(lambda v: f'color: {"#05CD99" if v=="NET BUY" else "#EE5D50" if v=="NET SELL" else "#555"}; font-weight:bold;', subset=['Direction']),
             use_container_width=True, hide_index=True
         )
     else:
