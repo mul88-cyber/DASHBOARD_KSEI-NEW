@@ -9,7 +9,7 @@ import numpy as np
 import io
 from datetime import datetime
 
-# Import library Google (sesuaikan jika perlu)
+# Import library Google
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
@@ -24,7 +24,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 🔥 FIX CSS (MDM STYLE PROPER) ---
+# --- 🔥 FIX CSS (MDM STYLE PROPER - LIGHT THEME) ---
 st.markdown("""
 <style>
     /* 1. FORCE LIGHT THEME VARIABLES */
@@ -55,21 +55,18 @@ st.markdown("""
         font-weight: 600;
     }
     
-    /* 4. Widget Inputs (Selectbox, NumberInput) Styling */
-    /* Mengubah kotak input menjadi putih dengan border halus, bukan kotak hitam */
+    /* 4. Widget Inputs Styling */
     div[data-baseweb="select"] > div, div[data-baseweb="input"] > div {
         background-color: #FFFFFF !important;
         border: 1px solid #E0E5F2 !important;
         color: #2B3674 !important;
         border-radius: 10px !important;
     }
-    
-    /* Fix teks di dalam input box agar tidak putih */
     div[data-baseweb="select"] span, input.st-ac {
         color: #2B3674 !important;
     }
     
-    /* 5. Custom Buttons (Purple Gradient like MDM) */
+    /* 5. Custom Buttons */
     div.stButton > button {
         background: linear-gradient(90deg, #4318FF 0%, #868CFF 100%);
         color: white;
@@ -88,7 +85,7 @@ st.markdown("""
         color: white;
     }
 
-    /* 6. Card Styling (White Box with Soft Shadow) */
+    /* 6. Card Styling */
     .css-card {
         background-color: #FFFFFF;
         border-radius: 20px;
@@ -98,7 +95,7 @@ st.markdown("""
         border: none;
     }
     
-    /* 7. Header Banner (Purple Gradient) */
+    /* 7. Header Banner */
     .header-banner {
         background: linear-gradient(86.88deg, #4318FF 0%, #868CFF 100%);
         border-radius: 20px;
@@ -132,6 +129,12 @@ st.markdown("""
         padding: 10px;
         border-radius: 15px;
         box-shadow: 0px 5px 15px rgba(0,0,0,0.05);
+    }
+    .card-title {
+        font-size: 20px;
+        font-weight: 700;
+        color: #2B3674;
+        margin-bottom: 20px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -223,7 +226,7 @@ def load_data():
         return pd.DataFrame(), f"❌ Error: {e}", "error"
 
 # ==============================================================================
-# 🛠️ 4) HELPER FUNCTIONS (UPDATED VISUALS)
+# 🛠️ 4) HELPER FUNCTIONS
 # ==============================================================================
 
 def format_id_short(value, is_currency=False):
@@ -500,7 +503,7 @@ with tab2:
         else:
             st.info("Data tidak tersedia.")
 
-# --- TAB 3: INDIVIDUAL ---
+# --- TAB 3: INDIVIDUAL (UPDATED LAYOUT: SANKEY TOP, HIST BOTTOM) ---
 with tab3:
     stocks_avail = sorted(df['Code'].unique())
     sel_stock = st.selectbox("🔎 Cari Kode Saham:", stocks_avail, index=stocks_avail.index('BBRI') if 'BBRI' in stocks_avail else 0)
@@ -540,39 +543,36 @@ with tab3:
         <div style="font-size:18px; font-weight:700; color:#2B3674;">{last_row.get('Sector','-')}</div>
     </div>""", unsafe_allow_html=True)
 
-    # 2. Main Content
-    c_sankey, c_hist = st.columns([3, 2])
+    # 2. SANKEY CHART (Full Width)
+    st.markdown('<div class="css-card">', unsafe_allow_html=True)
+    mode_sankey = st.radio("Mode Visualisasi:", ["Value (Rp)", "Volume (Lot)"], horizontal=True, label_visibility="collapsed")
+    mode_key = 'Value' if 'Rp' in mode_sankey else 'Volume'
     
-    with c_sankey:
-        st.markdown('<div class="css-card">', unsafe_allow_html=True)
-        mode_sankey = st.radio("Mode Visualisasi:", ["Value (Rp)", "Volume (Lot)"], horizontal=True, label_visibility="collapsed")
-        mode_key = 'Value' if 'Rp' in mode_sankey else 'Volume'
-        
-        date_for_sankey = df_stock_month.iloc[0]['Date'] if not df_stock_month.empty else last_row['Date']
-        fig_sankey = create_sankey_chart(df, sel_stock, date_for_sankey, mode=mode_key)
-        
-        if fig_sankey:
-            st.plotly_chart(fig_sankey, use_container_width=True)
-        else:
-            st.info("Pergerakan tidak cukup signifikan untuk Sankey.")
-        st.markdown('</div>', unsafe_allow_html=True)
+    date_for_sankey = df_stock_month.iloc[0]['Date'] if not df_stock_month.empty else last_row['Date']
+    fig_sankey = create_sankey_chart(df, sel_stock, date_for_sankey, mode=mode_key)
+    
+    if fig_sankey:
+        st.plotly_chart(fig_sankey, use_container_width=True)
+    else:
+        st.info("Pergerakan tidak cukup signifikan untuk Sankey.")
+    st.markdown('</div>', unsafe_allow_html=True)
 
-    with c_hist:
-        st.markdown('<div class="css-card"><div class="card-title">📅 Monthly History</div>', unsafe_allow_html=True)
-        df_hist = calculate_monthly_change_table(df_stock_all)
-        
-        try:
-            st.dataframe(
-                df_hist.style.format("{:,.0f}", subset=OWNERSHIP_CHG_COLS)
-                .background_gradient(cmap='RdYlGn', subset=OWNERSHIP_CHG_COLS, axis=1),
-                use_container_width=True, hide_index=True, height=450
-            )
-        except:
-            st.dataframe(
-                df_hist.style.format("{:,.0f}", subset=OWNERSHIP_CHG_COLS),
-                use_container_width=True, hide_index=True, height=450
-            )
-        st.markdown('</div>', unsafe_allow_html=True)
+    # 3. MONTHLY HISTORY (Full Width - Below Sankey)
+    st.markdown('<div class="css-card"><div class="card-title">📅 Monthly History (Deep Trends)</div>', unsafe_allow_html=True)
+    df_hist = calculate_monthly_change_table(df_stock_all)
+    
+    try:
+        st.dataframe(
+            df_hist.style.format("{:,.0f}", subset=OWNERSHIP_CHG_COLS)
+            .background_gradient(cmap='RdYlGn', subset=OWNERSHIP_CHG_COLS, axis=1),
+            use_container_width=True, hide_index=True
+        )
+    except:
+        st.dataframe(
+            df_hist.style.format("{:,.0f}", subset=OWNERSHIP_CHG_COLS),
+            use_container_width=True, hide_index=True
+        )
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # --- TAB 4: SCREENER ---
 with tab4:
