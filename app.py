@@ -764,6 +764,14 @@ with st.sidebar:
                                       value=20_000_000_000,  # 20 MILIAR
                                       step=5_000_000_000, 
                                       format="%d")
+        
+        # 🔥 TAMBAHKAN INI: Conviction Threshold
+        conviction_threshold = st.slider("🎯 Conviction Threshold", 
+                                        min_value=50, 
+                                        max_value=100, 
+                                        value=75, 
+                                        step=5,
+                                        help="Minimum conviction score for high conviction stocks")
 
 # --- MAIN PAGE HEADER (Purple Gradient) ---
 st.markdown(f"""
