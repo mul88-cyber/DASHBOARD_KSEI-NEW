@@ -1054,12 +1054,12 @@ with tab6:
     with col_h1:
         st.markdown(f"<div class='card-title'>Pergerakan Signifikan: {selected_month_str}</div>", unsafe_allow_html=True)
     with col_h2:
-    threshold_pct_tab6 = st.number_input("Threshold % Saham", 0.1, 20.0, 1.0, 0.1)  # 1% bukan 5%
-
-    # Dan di pemanggilan fungsi:
-    df_hot = get_significant_movements(df_filtered_month, 
-                                      threshold_rp=50e9,  # 50 MILIAR, bukan 10e9
-                                      threshold_pct=threshold_pct_tab6)
+        threshold_pct_tab6 = st.number_input("Threshold % Saham", 0.1, 20.0, 1.0, 0.1)  # 1% bukan 5%
+    
+        # Dan di pemanggilan fungsi:
+        df_hot = get_significant_movements(df_filtered_month, 
+                                          threshold_rp=50e9,  # 50 MILIAR, bukan 10e9
+                                          threshold_pct=threshold_pct_tab6)
     
     if not df_hot.empty:
         # Tambahkan Institutional Metrics
