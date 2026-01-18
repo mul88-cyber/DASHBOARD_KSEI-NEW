@@ -400,63 +400,126 @@ def calculate_institutional_conviction(df, stock_code):
 # --- SMART MONEY CLUSTERING ANALYSIS ---
 def cluster_smart_money_patterns(df, n_clusters=4, sample_size=200):
     """🤖 Cluster saham berdasarkan pattern smart money"""
-    # Siapkan features
-    features = []
-    stock_codes = []
-    sectors = []
-    
-    for code in df['Code'].unique()[:sample_size]:  # Batasi untuk performa
-        df_stock = df[df['Code'] == code].tail(20)  # 20 hari terakhir
-        if len(df_stock) < 5: continue
+    try:
+        # Siapkan features dengan error handling
+        features = []
+        stock_codes = []
+        sectors = []
         
-        # Features: flow pattern, volatility, accumulation rate
-        flow_cols = [c for c in SMART_MONEY_COLS if c in df_stock.columns]
-        retail_cols = [c for c in RETAIL_COLS if c in df_stock.columns]
+        # Filter stocks with enough data
+        valid_stocks = []
+        for code in df['Code'].unique()[:sample_size]:
+            df_stock = df[df['Code'] == code].tail(20)  # 20 hari terakhir
+            if len(df_stock) < 5: 
+                continue
+            
+            # Check for required columns
+            required_cols = ['Price']
+            if not all(col in df_stock.columns for col in required_cols):
+                continue
+            
+            # Check for NaN/inf values
+            if df_stock['Price'].isna().any() or df_stock['Price'].isin([np.inf, -np.inf]).any():
+                continue
+                
+            valid_stocks.append((code, df_stock))
         
-        smart_flow = df_stock[flow_cols].sum().sum() if flow_cols else 0
-        retail_flow = df_stock[retail_cols].sum().sum() if retail_cols else 0
-        flow_ratio = smart_flow / abs(retail_flow) if retail_flow != 0 else 10
+        if len(valid_stocks) < n_clusters: 
+            st.warning(f"⚠️ Tidak cukup data untuk clustering. Minimal {n_clusters} saham diperlukan.")
+            return pd.DataFrame()
         
-        price_volatility = df_stock['Price'].pct_change().std() * 100 if len(df_stock) > 1 else 0
-        accumulation_days = (df_stock[flow_cols].sum(axis=1) > 0).sum() if flow_cols else 0
+        for code, df_stock in valid_stocks:
+            # Features: flow pattern, volatility, accumulation rate
+            flow_cols = [c for c in SMART_MONEY_COLS if c in df_stock.columns]
+            retail_cols = [c for c in RETAIL_COLS if c in df_stock.columns]
+            
+            smart_flow = df_stock[flow_cols].sum().sum() if flow_cols else 0
+            retail_flow = df_stock[retail_cols].sum().sum() if retail_cols else 0
+            
+            # Handle division by zero
+            if retail_flow != 0:
+                flow_ratio = smart_flow / abs(retail_flow)
+            else:
+                flow_ratio = 10 if smart_flow > 0 else 0
+            
+            # Calculate price volatility with error handling
+            try:
+                price_returns = df_stock['Price'].pct_change()
+                price_volatility = price_returns.std() * 100 if len(price_returns) > 1 else 0
+                
+                # Check for NaN/inf
+                if pd.isna(price_volatility) or np.isinf(price_volatility):
+                    price_volatility = 0
+            except:
+                price_volatility = 0
+            
+            accumulation_days = (df_stock[flow_cols].sum(axis=1) > 0).sum() if flow_cols else 0
+            
+            # Convert smart_flow to miliar, cap extreme values
+            smart_flow_miliar = smart_flow / 1e9
+            if abs(smart_flow_miliar) > 100:  # Cap at 100 miliar
+                smart_flow_miliar = np.sign(smart_flow_miliar) * 100
+            
+            # Check for NaN/inf in features
+            features_array = [
+                smart_flow_miliar,  # Smart money flow (miliar)
+                min(flow_ratio, 100) if flow_ratio != np.inf else 100,  # Cap flow ratio
+                min(price_volatility, 50) if not pd.isna(price_volatility) else 0,  # Cap volatility
+                min(accumulation_days, 20)  # Cap accumulation days
+            ]
+            
+            # Validate features
+            if any(pd.isna(x) or np.isinf(x) for x in features_array):
+                continue
+            
+            features.append(features_array)
+            stock_codes.append(code)
+            sectors.append(df_stock.iloc[-1].get('Sector', 'N/A'))
         
-        features.append([
-            smart_flow / 1e9,  # Smart money flow (miliar)
-            flow_ratio,        # Smart vs retail ratio
-            price_volatility,  # Volatilitas harga
-            accumulation_days, # Hari akumulasi
-        ])
-        stock_codes.append(code)
-        sectors.append(df_stock.iloc[-1].get('Sector', 'N/A'))
-    
-    if len(features) < n_clusters: return pd.DataFrame()
-    
-    # Clustering
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(features)
-    kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-    clusters = kmeans.fit_predict(X_scaled)
-    
-    # Interpretasi cluster
-    cluster_labels = {
-        0: "🚀 Strong Accumulation",
-        1: "🕵️ Stealth Accumulation", 
-        2: "⚠️ Distribution",
-        3: "📊 Sideways Accumulation",
-        4: "🎯 High Conviction" if n_clusters > 4 else "Other"
-    }
-    
-    results = pd.DataFrame({
-        'Code': stock_codes,
-        'Sector': sectors,
-        'Cluster': clusters,
-        'Cluster_Label': [cluster_labels.get(c, f"Cluster {c}") for c in clusters],
-        'Smart_Flow_Miliar': [f[0] for f in features],
-        'Flow_Ratio': [f[1] for f in features],
-        'Volatility': [f[2] for f in features]
-    })
-    
-    return results.sort_values('Smart_Flow_Miliar', ascending=False)
+        if len(features) < n_clusters: 
+            st.warning(f"⚠️ Hanya {len(features)} saham valid untuk clustering. Minimal {n_clusters} diperlukan.")
+            return pd.DataFrame()
+        
+        # Convert to numpy array
+        X = np.array(features)
+        
+        # Check for NaN/inf in final array
+        if np.any(np.isnan(X)) or np.any(np.isinf(X)):
+            st.error("❌ Masih ada NaN/Inf values di data features.")
+            return pd.DataFrame()
+        
+        # Clustering
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        
+        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        clusters = kmeans.fit_predict(X_scaled)
+        
+        # Interpretasi cluster
+        cluster_labels = {
+            0: "🚀 Strong Accumulation",
+            1: "🕵️ Stealth Accumulation", 
+            2: "⚠️ Distribution",
+            3: "📊 Sideways Accumulation",
+            4: "🎯 High Conviction" if n_clusters > 4 else "Other"
+        }
+        
+        results = pd.DataFrame({
+            'Code': stock_codes,
+            'Sector': sectors,
+            'Cluster': clusters,
+            'Cluster_Label': [cluster_labels.get(c, f"Cluster {c}") for c in clusters],
+            'Smart_Flow_Miliar': [f[0] for f in features],
+            'Flow_Ratio': [f[1] for f in features],
+            'Volatility': [f[2] for f in features],
+            'Accumulation_Days': [f[3] for f in features]
+        })
+        
+        return results.sort_values('Smart_Flow_Miliar', ascending=False)
+        
+    except Exception as e:
+        st.error(f"❌ Error dalam clustering: {str(e)}")
+        return pd.DataFrame()
 
 # --- INSTITUTIONAL FOOTPRINT TRACKER ---
 def track_institutional_footprint(df, window_days=60):
