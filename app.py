@@ -16,6 +16,16 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
+# Fungsi untuk format period
+def get_period_suffix():
+    return "bulan" if DATA_FREQUENCY == "MONTHLY" else "hari"
+
+def scale_threshold(base_value):
+    """Scale threshold berdasarkan frekuensi data"""
+    if DATA_FREQUENCY == "MONTHLY":
+        return base_value * 20  # Asumsi 20 hari trading/bulan
+    return base_value
+
 # ==============================================================================
 # ⚙️ 2) KONFIGURASI DASHBOARD & G-DRIVE
 # ==============================================================================
@@ -319,32 +329,44 @@ def detect_coordinated_accumulation(df, stock_code, min_institutions=3, threshol
     return is_coordinated, institutions_accumulating
 
 # --- STEALTH ACCUMULATION DETECTOR ---
-def detect_stealth_accumulation(df, stock_code, window=20):
-    """🕵️ Deteksi akumulasi diam-diam (small consistent buying over time)"""
+def detect_stealth_accumulation(df, stock_code):
+    """🕵️ Deteksi akumulasi diam-diam UNTUK DATA BULANAN"""
     df_stock = df[df['Code'] == stock_code].sort_values('Date')
-    if len(df_stock) < window: return False, None
     
-    # Hitung cumulative flow tanpa spike besar
-    flow_cols = [c for c in OWNERSHIP_CHG_RP_COLS if any(x in c for x in ['Foreign IS', 'Foreign IB', 'Foreign PF', 
-                                                                          'Local IS', 'Local IB', 'Local PF', 'Local MF'])]
+    # UNTUK DATA BULANAN: window = 6 bulan (bukan 20 hari)
+    window = 6
+    
+    if len(df_stock) < window: 
+        return False, None
+    
+    flow_cols = [c for c in OWNERSHIP_CHG_RP_COLS if any(x in c for x in 
+                ['Foreign IS', 'Foreign IB', 'Foreign PF', 'Local IS', 'Local IB', 'Local PF', 'Local MF'])]
+    
+    if not flow_cols: 
+        return False, None
+    
     df_stock['Stealth_Flow'] = df_stock[flow_cols].sum(axis=1)
-    
-    # Cari pattern: flow positif konsisten tanpa volume spike
     df_window = df_stock.tail(window)
-    positive_days = (df_window['Stealth_Flow'] > 0).sum()
-    avg_flow = df_window['Stealth_Flow'].mean()
-    max_flow = df_window['Stealth_Flow'].max()
     
-    # Criteria: 70% hari positif, rata2 flow moderat, tidak ada spike ekstrem
-    is_stealth = (positive_days/window >= 0.7) and (avg_flow > 1e9) and (max_flow < 10e9)
+    # PARAMETER UNTUK BULANAN:
+    positive_months = (df_window['Stealth_Flow'] > 0).sum()
+    avg_monthly_flow = df_window['Stealth_Flow'].mean()
+    max_monthly_flow = df_window['Stealth_Flow'].max()
     
-    stealth_score = min(100, (positive_days/window * 50) + (min(avg_flow/1e9, 5) * 10))
+    # THRESHOLD BULANAN (LEBIH TINGGI):
+    is_stealth = (
+        (positive_months/window >= 0.67) and    # Minimal 4 dari 6 bulan positif
+        (avg_monthly_flow > 5_000_000_000) and  # > Rp 5 Miliar/bulan (bukan 1 M/hari)
+        (max_monthly_flow < 50_000_000_000)     # < Rp 50 Miliar/bulan max spike
+    )
+    
+    stealth_score = min(100, (positive_months/window * 50) + (min(avg_monthly_flow/10e9, 5) * 10))
     
     return is_stealth, {
-        'positive_days': positive_days,
-        'avg_daily_flow': avg_flow,
+        'positive_months': positive_months,
+        'avg_monthly_flow': avg_monthly_flow,
         'total_stealth_accumulation': df_window['Stealth_Flow'].sum(),
-        'max_single_day_flow': max_flow,
+        'max_single_month_flow': max_monthly_flow,
         'stealth_score': stealth_score
     }
 
@@ -583,36 +605,54 @@ def calculate_monthly_change_table(df_stock):
     return df_res
 
 @st.cache_data
-def calculate_smart_money_signals(df_year, window_periods=3, min_acc_threshold=5e9):
-    if df_year.empty: return pd.DataFrame()
+def calculate_smart_money_signals(df_year, window_periods=2, min_acc_threshold=20e9):
+    """Signal detection untuk data BULANAN"""
+    if df_year.empty: 
+        return pd.DataFrame()
+    
     results = []
     for code in df_year['Code'].unique():
         df_w = df_year[df_year['Code'] == code].sort_values('Date').tail(window_periods)
-        if df_w.empty: continue
+        if df_w.empty: 
+            continue
         
         last_p = df_w.iloc[-1]['Price']
         start_p = df_w.iloc[0]['Price']
         pct = ((last_p - start_p)/start_p)*100 if start_p > 0 else 0
         
+        # THRESHOLD UNTUK BULANAN (20 MILIAR):
         sm_sum = df_w[[c for c in SMART_MONEY_COLS if c in df_w]].sum().sum()
         ret_sum = df_w[[c for c in RETAIL_COLS if c in df_w]].sum().sum()
         
-        status, score = "Netral", 0
-        if sm_sum > min_acc_threshold and ret_sum < 0: status, score = "🔥 Big Accumulation", 100
-        elif sm_sum > (min_acc_threshold/2) and pct <= 3: status, score = "💎 Divergence", 80
-        elif sm_sum < -min_acc_threshold and ret_sum > 0: status, score = "⚠️ Distribution", -50
+        status = "Netral"
+        if sm_sum > min_acc_threshold and ret_sum < 0: 
+            status = "🔥 Big Accumulation"
+        elif sm_sum > (min_acc_threshold/2) and pct <= 5:  # 5% untuk bulanan
+            status = "💎 Divergence"
+        elif sm_sum < -min_acc_threshold and ret_sum > 0: 
+            status = "⚠️ Distribution"
         
-        if abs(score) >= 50:
-            results.append({'Code': code, 'Sector': df_w.iloc[-1].get('Sector','N/A'), 'Price': last_p, 
-                           'Price Chg %': pct, 'Smart Money (Rp)': sm_sum, 'Retail (Rp)': ret_sum, 'Signal': status})
+        if status != "Netral":
+            results.append({
+                'Code': code, 
+                'Sector': df_w.iloc[-1].get('Sector','N/A'), 
+                'Price': last_p, 
+                'Price Chg %': pct, 
+                'Smart Money (Rp)': sm_sum, 
+                'Retail (Rp)': ret_sum, 
+                'Signal': status
+            })
     
     df_res = pd.DataFrame(results)
-    if not df_res.empty: df_res = df_res.sort_values('Smart Money (Rp)', ascending=False)
+    if not df_res.empty: 
+        df_res = df_res.sort_values('Smart Money (Rp)', ascending=False)
     return df_res
 
 @st.cache_data
-def get_significant_movements(df_month, threshold_rp=10e9, threshold_pct=5):
-    if df_month.empty: return pd.DataFrame()
+def get_significant_movements(df_month, threshold_rp=50e9, threshold_pct=1):  # 50 MILIAR, 1%
+    if df_month.empty: 
+        return pd.DataFrame()
+    
     results = []
     available_rp_cols = [c for c in OWNERSHIP_CHG_RP_COLS if c in df_month.columns]
 
@@ -623,6 +663,7 @@ def get_significant_movements(df_month, threshold_rp=10e9, threshold_pct=5):
         shares = row.get('Sec. Num', 1)
         pct = (abs_flow / shares * 100) if shares > 0 else 0
         
+        # THRESHOLD UNTUK BULANAN LEBIH TINGGI
         if abs_flow >= threshold_rp or pct >= threshold_pct:
             direction = "NET BUY" if net_flow > 0 else "NET SELL" if net_flow < 0 else "NEUTRAL"
             
@@ -634,13 +675,20 @@ def get_significant_movements(df_month, threshold_rp=10e9, threshold_pct=5):
             seller_str = f"{top_s_cat}" if vals[top_s_cat] < 0 else "-"
 
             results.append({
-                'Code': code, 'Sector': row.get('Sector','N/A'), 'Price': row.get('Price',0),
-                'Total Flow (Rp)': abs_flow, 'Net Flow (Rp)': net_flow, 'Flow %': pct, 
-                'Direction': direction, 'Top_Buyer': buyer_str, 'Top_Seller': seller_str
+                'Code': code, 
+                'Sector': row.get('Sector','N/A'), 
+                'Price': row.get('Price',0),
+                'Total Flow (Rp)': abs_flow, 
+                'Net Flow (Rp)': net_flow, 
+                'Flow %': pct, 
+                'Direction': direction, 
+                'Top_Buyer': buyer_str, 
+                'Top_Seller': seller_str
             })
     
     df_res = pd.DataFrame(results)
-    if not df_res.empty: df_res = df_res.sort_values('Total Flow (Rp)', ascending=False)
+    if not df_res.empty: 
+        df_res = df_res.sort_values('Total Flow (Rp)', ascending=False)
     return df_res
 
 # --- SANKEY CHART ---
@@ -707,15 +755,21 @@ with st.sidebar:
 
     st.divider()
     with st.expander("⚙️ Advanced Filter"):
-        threshold_rp = st.number_input("Min Flow (Rp)", value=10_000_000_000, step=1_000_000_000, format="%d")
-        min_rotation = st.number_input("Min Rotation (Rp)", value=1_000_000_000, step=500_000_000, format="%d")
-        conviction_threshold = st.slider("Min Conviction Score", 0, 100, 75)
+        # UNTUK DATA BULANAN, PAKAI INI:
+        threshold_rp = st.number_input("Min Flow (Rp)", 
+                                      value=50_000_000_000,  # 50 MILIAR
+                                      step=10_000_000_000, 
+                                      format="%d")
+        min_rotation = st.number_input("Min Rotation (Rp)", 
+                                      value=20_000_000_000,  # 20 MILIAR
+                                      step=5_000_000_000, 
+                                      format="%d")
 
 # --- MAIN PAGE HEADER (Purple Gradient) ---
 st.markdown(f"""
     <div class="header-banner">
-        <div class="header-title">Welcome, Institutional Trader! 👋</div>
-        <div class="header-subtitle">Advanced Bandarmology & Institutional Intelligence Engine - Periode <b>{selected_month.strftime('%B %Y')}</b></div>
+        <div class="header-title">KSEI Bandarmology PRO - Data Bulanan</div>
+        <div class="header-subtitle">Analisis kepemilikan institusional data bulanan KSEI</div>
     </div>
 """, unsafe_allow_html=True)
 
@@ -1000,9 +1054,12 @@ with tab6:
     with col_h1:
         st.markdown(f"<div class='card-title'>Pergerakan Signifikan: {selected_month_str}</div>", unsafe_allow_html=True)
     with col_h2:
-        threshold_pct_tab6 = st.number_input("Threshold % Saham", 0.1, 20.0, 5.0, 0.5)
+    threshold_pct_tab6 = st.number_input("Threshold % Saham", 0.1, 20.0, 1.0, 0.1)  # 1% bukan 5%
 
-    df_hot = get_significant_movements(df_filtered_month, threshold_rp=10e9, threshold_pct=threshold_pct_tab6)
+    # Dan di pemanggilan fungsi:
+    df_hot = get_significant_movements(df_filtered_month, 
+                                      threshold_rp=50e9,  # 50 MILIAR, bukan 10e9
+                                      threshold_pct=threshold_pct_tab6)
     
     if not df_hot.empty:
         # Tambahkan Institutional Metrics
