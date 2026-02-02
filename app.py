@@ -1206,37 +1206,61 @@ with tab7:
     if not df.empty:
         st.markdown('<div class="header-banner" style="margin-bottom:20px; padding:20px;"><div class="header-title">🎯 Institutional Intelligence Engine</div></div>', unsafe_allow_html=True)
         
-        # High Conviction Stocks
+        # High Conviction Stocks - DENGAN ERROR HANDLING
         st.markdown('<div class="css-card"><div class="card-title">🏆 High Conviction Stocks</div>', unsafe_allow_html=True)
-        with st.spinner("Scanning high conviction stocks..."):
-            df_high_conviction = scan_high_conviction_stocks(df, min_score=conviction_threshold, min_flow=5e9)
         
-        if not df_high_conviction.empty:
-            df_display = df_high_conviction.copy()
-            # Format institutional flow
-            if 'Institutional_Flow' in df_display.columns:
-                df_display['Institutional_Flow_Formatted'] = df_display['Institutional_Flow'].apply(lambda x: format_id_short(x, True))
+        try:
+            with st.spinner("Scanning high conviction stocks..."):
+                df_high_conviction = scan_high_conviction_stocks(df, min_score=conviction_threshold, min_flow=5e9)
             
-            display_cols = ['Code', 'Sector', 'Price', 'Conviction_Score', 'Institutional_Flow_Formatted', 'Is_Stealth', 'Is_Coordinated']
-            available_display_cols = [col for col in display_cols if col in df_display.columns]
-            
-            st.dataframe(df_display[available_display_cols], use_container_width=True, hide_index=True)
-        else:
-            st.info(f"Tidak ada saham dengan conviction score ≥ {conviction_threshold}")
+            if not df_high_conviction.empty:
+                df_display = df_high_conviction.copy()
+                
+                # Format institutional flow
+                if 'Institutional_Flow' in df_display.columns:
+                    df_display['Institutional_Flow_Formatted'] = df_display['Institutional_Flow'].apply(
+                        lambda x: format_id_short(x, True) if pd.notna(x) else "N/A"
+                    )
+                
+                # Pilih kolom untuk display
+                display_cols = ['Code', 'Sector', 'Price', 'Conviction_Score', 
+                              'Institutional_Flow_Formatted', 'Is_Stealth', 'Is_Coordinated']
+                
+                # Filter kolom yang tersedia
+                available_display_cols = [col for col in display_cols if col in df_display.columns]
+                
+                if available_display_cols:
+                    st.dataframe(df_display[available_display_cols], use_container_width=True, hide_index=True)
+                else:
+                    st.info("Tidak ada kolom yang tersedia untuk display")
+            else:
+                st.info(f"Tidak ada saham dengan conviction score ≥ {conviction_threshold}")
+                
+        except Exception as e:
+            st.error(f"Error scanning high conviction stocks: {str(e)}")
+            st.info("Coba turunkan threshold atau refresh data")
+        
         st.markdown('</div>', unsafe_allow_html=True)
         
-        # Smart Money Clustering
+        # Smart Money Clustering - DENGAN ERROR HANDLING
         st.markdown('<div class="css-card"><div class="card-title">🤖 Smart Money Clustering</div>', unsafe_allow_html=True)
-        with st.spinner("Clustering smart money patterns..."):
-            df_clusters = cluster_smart_money_patterns(df, n_clusters=4)
         
-        if not df_clusters.empty:
-            fig_cluster = px.scatter(df_clusters, x='Smart_Flow_Miliar', y='Volatility', 
-                                    color='Cluster_Label', hover_data=['Code', 'Sector'], 
-                                    title="Smart Money Clusters")
-            st.plotly_chart(update_plotly_layout(fig_cluster), use_container_width=True)
-        else:
-            st.info("Tidak ada data untuk clustering")
+        try:
+            with st.spinner("Clustering smart money patterns..."):
+                df_clusters = cluster_smart_money_patterns(df, n_clusters=4)
+            
+            if not df_clusters.empty:
+                fig_cluster = px.scatter(df_clusters, x='Smart_Flow_Miliar', y='Volatility', 
+                                        color='Cluster_Label', hover_data=['Code', 'Sector'], 
+                                        title="Smart Money Clusters")
+                st.plotly_chart(update_plotly_layout(fig_cluster), use_container_width=True)
+            else:
+                st.info("Tidak ada data untuk clustering")
+                
+        except Exception as e:
+            st.error(f"Error in clustering: {str(e)}")
+            st.info("Clustering tidak tersedia saat ini")
+        
         st.markdown('</div>', unsafe_allow_html=True)
     else:
         st.warning("Data tidak tersedia untuk institutional intelligence")
