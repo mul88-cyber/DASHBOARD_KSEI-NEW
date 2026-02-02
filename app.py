@@ -1022,10 +1022,28 @@ with tab4:
             df_scr = df_filtered_month[mask].copy()
             
             if not df_scr.empty:
-                # Sort dan hitung metrics
+                # Sort dan hitung metrics DENGAN ERROR HANDLING
                 df_scr = df_scr.sort_values(buyer_col, ascending=False)
-                df_scr['Conviction_Score'] = df_scr['Code'].apply(lambda x: calculate_institutional_conviction(df, x)[0])
-                df_scr['Is_Stealth'] = df_scr['Code'].apply(lambda x: detect_stealth_accumulation(df, x)[0])
+                
+                # 🔥 PERBAIKAN: Gunakan try-except dalam apply
+                def safe_calculate_conviction(code):
+                    try:
+                        score, _ = calculate_institutional_conviction(df, code)
+                        return score
+                    except:
+                        return 0  # Default value jika error
+                
+                # 🔥 PERBAIKAN: Gunakan try-except untuk stealth detection
+                def safe_detect_stealth(code):
+                    try:
+                        is_stealth, _ = detect_stealth_accumulation(df, code)
+                        return is_stealth
+                    except:
+                        return False
+                
+                # Apply dengan fungsi yang aman
+                df_scr['Conviction_Score'] = df_scr['Code'].apply(safe_calculate_conviction)
+                df_scr['Is_Stealth'] = df_scr['Code'].apply(safe_detect_stealth)
                 
                 # Pilih kolom untuk display
                 display_cols = ['Code', 'Sector', 'Conviction_Score', 'Is_Stealth', 
@@ -1033,23 +1051,75 @@ with tab4:
                 available_display_cols = [col for col in display_cols if col in df_scr.columns]
                 
                 disp = df_scr[available_display_cols].copy()
-                disp.columns = ['Code', 'Sector', 'Conviction', 'Stealth', 'Buyer', 'Buy Val', 'Seller', 'Sell Val']
+                
+                # Rename columns untuk display
+                rename_dict = {
+                    'Code': 'Code',
+                    'Sector': 'Sector',
+                    'Conviction_Score': 'Conviction',
+                    'Is_Stealth': 'Stealth',
+                    'Top_Buyer': 'Buyer',
+                    buyer_col: 'Buy Val',
+                    'Top_Seller': 'Seller',
+                    seller_col: 'Sell Val'
+                }
+                
+                disp = disp.rename(columns=rename_dict)
+                
+                # Pastikan semua kolom yang diperlukan ada
+                expected_cols = ['Code', 'Sector', 'Conviction', 'Stealth', 'Buyer', 'Buy Val', 'Seller', 'Sell Val']
+                for col in expected_cols:
+                    if col not in disp.columns:
+                        disp[col] = None
                 
                 # Style dataframe
                 def style_conviction(val):
-                    if val >= 80: return 'color: #0D9D58; font-weight: bold;'
-                    elif val >= 60: return 'color: #FF9800; font-weight: bold;'
-                    else: return 'color: #FF3B30; font-weight: bold;'
+                    try:
+                        val_float = float(val)
+                        if val_float >= 80: 
+                            return 'color: #0D9D58; font-weight: bold;'
+                        elif val_float >= 60: 
+                            return 'color: #FF9800; font-weight: bold;'
+                        else: 
+                            return 'color: #FF3B30; font-weight: bold;'
+                    except:
+                        return ''
                 
                 def style_flag(val):
-                    return 'background-color: #D6F5E3; color: #0D9D58; font-weight: bold; text-align: center;' if val else ''
+                    try:
+                        if bool(val): 
+                            return 'background-color: #D6F5E3; color: #0D9D58; font-weight: bold; text-align: center;'
+                        else: 
+                            return ''
+                    except:
+                        return ''
                 
                 try:
-                    styled_df = disp.style.format({'Buy Val': '{:,.0f}', 'Sell Val': '{:,.0f}', 'Conviction': '{:.0f}'})\
-                        .applymap(style_conviction, subset=['Conviction'])\
-                        .applymap(style_flag, subset=['Stealth'])
+                    # Format numeric columns
+                    format_dict = {}
+                    if 'Buy Val' in disp.columns:
+                        format_dict['Buy Val'] = '{:,.0f}'
+                    if 'Sell Val' in disp.columns:
+                        format_dict['Sell Val'] = '{:,.0f}'
+                    if 'Conviction' in disp.columns:
+                        format_dict['Conviction'] = '{:.0f}'
+                    
+                    styled_df = disp.style
+                    
+                    if format_dict:
+                        styled_df = styled_df.format(format_dict)
+                    
+                    # Apply styling
+                    if 'Conviction' in disp.columns:
+                        styled_df = styled_df.applymap(style_conviction, subset=['Conviction'])
+                    
+                    if 'Stealth' in disp.columns:
+                        styled_df = styled_df.applymap(style_flag, subset=['Stealth'])
+                    
                     st.dataframe(styled_df, use_container_width=True, hide_index=True, height=600)
-                except:
+                except Exception as e:
+                    # Fallback: tampilkan tanpa styling
+                    st.error(f"Error styling dataframe: {e}")
                     st.dataframe(disp, use_container_width=True, hide_index=True)
             else:
                 st.info(f"Tidak ada rotasi > Rp {min_rotation:,.0f} di bulan {selected_month_str}")
