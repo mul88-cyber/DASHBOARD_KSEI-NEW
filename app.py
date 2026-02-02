@@ -1700,17 +1700,22 @@ with tab7:
         
         col_clust1, col_clust2 = st.columns(2)
         with col_clust1:
-            n_clusters = st.selectbox("Number of Clusters", [3, 4, 5, 6], index=1,
-                                    help="Jumlah cluster untuk grouping pattern")
+            n_clusters = st.selectbox("Number of Clusters", [3, 4, 5, 6], index=1, 
+                                    help="Jumlah cluster untuk grouping pattern", key="clust_n_tab7") # Tambah unique key
         with col_clust2:
-            sample_size = st.slider("Sample Size", 50, 500, 200, 50,
-                                  help="Jumlah saham yang dianalisis (untuk performance)")
+            sample_size = st.slider("Sample Size", 50, 500, 200, 50, 
+                                    help="Jumlah saham yang dianalisis (untuk performance)", key="clust_sample_tab7") # Tambah unique key
         
         try:
             with st.spinner("🤖 Processing clustering analysis..."):
                 df_clusters = cluster_smart_money_patterns(df, n_clusters=n_clusters, sample_size=sample_size)
             
             if not df_clusters.empty:
+                # --- 🔥 FIX CRITICAL: SIZE CHART TIDAK BOLEH NEGATIF ---
+                # Kita buat kolom baru 'Viz_Size' yang berisi nilai mutlak (absolut) dari Flow_Ratio
+                df_clusters['Viz_Size'] = df_clusters['Flow_Ratio'].abs()
+                df_clusters['Viz_Size'] = df_clusters['Viz_Size'].fillna(0) # Handle NaN
+
                 # Display cluster distribution
                 st.markdown("#### 📊 Cluster Distribution")
                 cluster_counts = df_clusters['Cluster_Label'].value_counts()
@@ -1721,17 +1726,11 @@ with tab7:
                 for idx, (label, count) in enumerate(cluster_counts.items()):
                     if idx < len(cols):
                         with cols[idx]:
-                            # Determine icon based on label
-                            if "Strong" in label:
-                                icon, color = "🚀", "#0D9D58"
-                            elif "Fight" in label:
-                                icon, color = "⚔️", "#FF9800"
-                            elif "Stealth" in label:
-                                icon, color = "🕵️", "#0066CC"
-                            elif "Distribution" in label:
-                                icon, color = "⚠️", "#FF3B30"
-                            else:
-                                icon, color = "📊", "#A3AED0"
+                            if "Strong" in label: icon, color = "🚀", "#0D9D58"
+                            elif "Fight" in label: icon, color = "⚔️", "#FF9800"
+                            elif "Stealth" in label: icon, color = "🕵️", "#0066CC"
+                            elif "Distribution" in label: icon, color = "⚠️", "#FF3B30"
+                            else: icon, color = "📊", "#A3AED0"
                             
                             st.markdown(f"""
                                 <div style="text-align: center; padding: 10px; background-color: {color}10; border-radius: 10px; border-left: 4px solid {color};">
@@ -1749,7 +1748,7 @@ with tab7:
                     x='Smart_Flow_Miliar', 
                     y='Volatility', 
                     color='Cluster_Label',
-                    size='Flow_Ratio',
+                    size='Viz_Size', # <--- SUDAH DIPERBAIKI (PAKE NILAI MUTLAK)
                     hover_data=['Code', 'Sector', 'Smart_Flow_Miliar', 'Flow_Ratio'],
                     title="Smart Money Clusters: Flow vs Volatility",
                     color_discrete_map={
@@ -1779,11 +1778,11 @@ with tab7:
                 # Cluster details table
                 st.markdown("#### 📋 Cluster Details")
                 
-                # Allow user to filter by cluster
                 selected_clusters = st.multiselect(
                     "Filter Clusters:",
                     options=df_clusters['Cluster_Label'].unique(),
-                    default=df_clusters['Cluster_Label'].unique()[:2]
+                    default=df_clusters['Cluster_Label'].unique()[:2],
+                    key="clust_filter_tab7" # Unique key agar tidak bentrok dengan Tab 5
                 )
                 
                 if selected_clusters:
@@ -1791,7 +1790,7 @@ with tab7:
                     
                     # Format for display
                     cluster_display = filtered_clusters[['Code', 'Sector', 'Cluster_Label', 
-                                                        'Smart_Flow_Miliar', 'Flow_Ratio', 'Volatility']].copy()
+                                                       'Smart_Flow_Miliar', 'Flow_Ratio', 'Volatility']].copy()
                     
                     cluster_display['Smart_Flow_Miliar'] = cluster_display['Smart_Flow_Miliar'].apply(lambda x: f"{x:,.1f}")
                     cluster_display['Flow_Ratio'] = cluster_display['Flow_Ratio'].apply(lambda x: f"{x:.2f}")
@@ -1815,108 +1814,18 @@ with tab7:
                         data=csv_clusters,
                         file_name=f"smart_money_clusters_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
                         mime="text/csv",
-                        use_container_width=True
+                        use_container_width=True,
+                        key="btn_dl_clust_tab7" # Unique key
                     )
                 else:
                     st.info("Pilih cluster untuk melihat detail")
                     
             else:
                 st.info("📭 Tidak ada data yang cukup untuk clustering analysis")
-                st.caption("Data mungkin terlalu sedikit atau tidak memiliki variasi yang cukup")
                 
         except Exception as e:
             st.error(f"❌ Error in clustering analysis: {str(e)}")
             st.info("⚠️ Clustering tidak tersedia saat ini. Coba dengan parameter berbeda.")
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # 3. Institutional Footprint Tracker
-        st.markdown('<div class="css-card"><div class="card-title">🗺️ Institutional Footprint Tracker</div>', unsafe_allow_html=True)
-        
-        footprint_window = st.slider("Tracking Window (Hari)", 30, 180, 90, 30,
-                                   help="Periode waktu untuk melacak perubahan footprint institusi")
-        
-        try:
-            with st.spinner("🗺️ Tracking institutional footprint..."):
-                df_footprint = track_institutional_footprint(df, window_days=footprint_window)
-            
-            if not df_footprint.empty:
-                # Display top movers
-                st.markdown(f"#### 🏆 Top {min(10, len(df_footprint))} Institutional Movers ({footprint_window} hari)")
-                
-                # Format for display
-                df_footprint_display = df_footprint.head(10).copy()
-                
-                if 'Price' in df_footprint_display.columns:
-                    df_footprint_display['Price_Formatted'] = df_footprint_display['Price'].apply(
-                        lambda x: f"Rp {x:,.0f}" if pd.notna(x) else "N/A"
-                    )
-                
-                if 'Total_Inst_Flow' in df_footprint_display.columns:
-                    df_footprint_display['Total_Inst_Flow_Formatted'] = df_footprint_display['Total_Inst_Flow'].apply(
-                        lambda x: format_id_short(x, True) if pd.notna(x) else "N/A"
-                    )
-                
-                if 'Flow_Percentage' in df_footprint_display.columns:
-                    df_footprint_display['Flow_Percentage'] = df_footprint_display['Flow_Percentage'].apply(
-                        lambda x: f"{x:.4f}%" if pd.notna(x) else "N/A"
-                    )
-                
-                if 'Footprint_Score' in df_footprint_display.columns:
-                    df_footprint_display['Footprint_Score'] = df_footprint_display['Footprint_Score'].apply(
-                        lambda x: f"{x:.1f}" if pd.notna(x) else "N/A"
-                    )
-                
-                # Select columns for display
-                footprint_cols = ['Code', 'Sector', 'Price_Formatted', 'Total_Inst_Flow_Formatted', 
-                                'Flow_Percentage', 'Footprint_Score']
-                available_footprint_cols = [col for col in footprint_cols if col in df_footprint_display.columns]
-                
-                if available_footprint_cols:
-                    df_footprint_display = df_footprint_display[available_footprint_cols]
-                    
-                    # Rename columns
-                    rename_footprint = {
-                        'Code': 'Kode',
-                        'Sector': 'Sektor',
-                        'Price_Formatted': 'Harga',
-                        'Total_Inst_Flow_Formatted': 'Flow Institusi',
-                        'Flow_Percentage': '% Flow',
-                        'Footprint_Score': 'Footprint Score'
-                    }
-                    
-                    df_footprint_display = df_footprint_display.rename(columns=rename_footprint)
-                    
-                    # Style the dataframe
-                    def color_footprint_score(val):
-                        try:
-                            score = float(val)
-                            if score >= 80:
-                                return 'background-color: #D6F5E3; color: #0D9D58; font-weight: bold;'
-                            elif score >= 60:
-                                return 'background-color: #FFF4E5; color: #FF9800; font-weight: bold;'
-                            elif score >= 40:
-                                return 'background-color: #FFE5E5; color: #FF3B30; font-weight: bold;'
-                        except:
-                            pass
-                        return ''
-                    
-                    styled_footprint = df_footprint_display.style
-                    
-                    if 'Footprint Score' in df_footprint_display.columns:
-                        styled_footprint = styled_footprint.applymap(color_footprint_score, subset=['Footprint Score'])
-                    
-                    st.dataframe(styled_footprint, use_container_width=True, hide_index=True)
-                else:
-                    st.warning("Tidak ada kolom footprint yang tersedia")
-                    
-            else:
-                st.info("📭 Tidak ada data footprint institusi yang signifikan")
-                st.caption("Coba dengan window waktu yang lebih panjang")
-                
-        except Exception as e:
-            st.error(f"❌ Error tracking institutional footprint: {str(e)}")
-            st.info("⚠️ Fitur footprint tracker tidak tersedia saat ini")
         
         st.markdown('</div>', unsafe_allow_html=True)
         
