@@ -337,7 +337,7 @@ def load_data():
         return pd.DataFrame(), f"❌ Error loading data: {str(e)}", "error"
 
 # ==============================================================================
-# 🛠️ 4) HELPER FUNCTIONS
+# 🛠️ 4) HELPER FUNCTIONS (REVISI)
 # ==============================================================================
 
 def format_id_short(value, is_currency=False):
@@ -375,316 +375,46 @@ def update_plotly_layout(fig):
     )
     return fig
 
-def get_available_columns(df, expected_cols):
+# 🔥 PERBAIKAN: Fungsi get_available_columns yang bisa handle Series dan DataFrame
+def get_available_columns(data, expected_cols):
     """Helper untuk mendapatkan kolom yang tersedia dari daftar expected"""
-    return [col for col in expected_cols if col in df.columns]
-
-# ==============================================================================
-# 🎯 5) INSTITUTIONAL INTELLIGENCE ENGINE (DIPERBARUI)
-# ==============================================================================
-
-def detect_coordinated_accumulation(df, stock_code, min_institutions=3, threshold_rp=5e9):
-    """🔍 Detect if multiple institutions are accumulating simultaneously"""
-    df_stock = df[df['Code'] == stock_code].sort_values('Date')
-    if len(df_stock) < 3: 
-        return False, {}
-    
-    latest = df_stock.iloc[-1]
-    institutions_accumulating = []
-    
-    # Fokus pada institusi utama (gunakan format baru)
-    target_insts = [
-        'Foreign IS_Chg_Val', 'Foreign IB_Chg_Val', 
-        'Local IS_Chg_Val', 'Local PF_Chg_Val', 'Local CP_Chg_Val'
-    ]
-    
-    # Cek kolom yang tersedia
-    available_cols = get_available_columns(latest, target_insts)
-    
-    for col in available_cols:
-        val = latest[col]
-        if val > threshold_rp:
-            inst_name = col.replace('_Chg_Val', '').replace('_', ' ')
-            percentage = (val / latest.get('Sec. Num', 1)) * 100 if latest.get('Sec. Num', 1) > 0 else 0
-            institutions_accumulating.append({
-                'institution': inst_name,
-                'amount': val,
-                'amount_formatted': format_id_short(val, True),
-                'percentage': percentage
-            })
-    
-    is_coordinated = len(institutions_accumulating) >= min_institutions
-    return is_coordinated, institutions_accumulating
-
-def detect_stealth_accumulation(df, stock_code):
-    """🕵️ Deteksi akumulasi diam-diam UNTUK DATA BULANAN"""
-    df_stock = df[df['Code'] == stock_code].sort_values('Date')
-    window = 6
-    
-    if len(df_stock) < window: 
-        return False, {}
-    
-    # Gunakan kolom value (Rp) untuk stealth detection
-    flow_cols = [c for c in OWNERSHIP_CHG_VAL_COLS if any(x in c for x in 
-                ['Foreign IS', 'Foreign IB', 'Local IS', 'Local PF', 'Local CP'])]
-    
-    available_cols = get_available_columns(df_stock, flow_cols)
-    if not available_cols: 
-        return False, {}
-    
-    df_stock['Stealth_Flow'] = df_stock[available_cols].sum(axis=1)
-    df_window = df_stock.tail(window)
-    
-    positive_months = (df_window['Stealth_Flow'] > 0).sum()
-    avg_flow = df_window['Stealth_Flow'].mean()
-    max_flow = df_window['Stealth_Flow'].max()
-    
-    # Logic: Konsisten positif tapi tidak spike (akumulasi santai)
-    is_stealth = (
-        (positive_months/window >= 0.67) and 
-        (avg_flow > 2_000_000_000) and 
-        (max_flow < 50_000_000_000) 
-    )
-    
-    stealth_score = min(100, (positive_months/window * 50) + (min(avg_flow/10e9, 5) * 10))
-    
-    return is_stealth, {
-        'positive_days': positive_months,
-        'avg_daily_flow': avg_flow,
-        'total_stealth_accumulation': df_window['Stealth_Flow'].sum(),
-        'max_single_day_flow': max_flow,
-        'stealth_score': stealth_score
-    }
-
-def calculate_institutional_conviction(df, stock_code):
-    """📊 Skor keyakinan institusional (0-100)"""
-    df_stock = df[df['Code'] == stock_code].sort_values('Date')
-    if len(df_stock) < 5: 
-        return 0, {}
-    
-    latest = df_stock.iloc[-1]
-    score_components = {}
-    
-    # 1. Net Institutional Flow (30 points)
-    # Gunakan kolom value (Rp)
-    inst_cols = [c for c in OWNERSHIP_CHG_VAL_COLS if any(x in c for x in ['IS', 'IB', 'PF', 'MF', 'CP'])]
-    available_inst_cols = get_available_columns(latest, inst_cols)
-    
-    weighted_flow = 0
-    total_inst_flow = 0
-    
-    for c in available_inst_cols:
-        val = latest[c]
-        total_inst_flow += val
-        if 'Local CP' in c: 
-            weighted_flow += val * 1.5  # Boost score for Corporate Action
-        else:
-            weighted_flow += val
-            
-    # Normalize flow score
-    max_ref = 50e9  # Reference max flow 50M
-    score_flow = min(30, (weighted_flow / max_ref) * 30) if weighted_flow > 0 else 0
-    score_components['institutional_flow'] = score_flow
-    
-    # 2. Flow Consistency (25 points)
-    if len(df_stock) >= 5 and available_inst_cols:
-        recent_flows = df_stock.tail(5)[available_inst_cols].sum(axis=1)
-        consistency = (recent_flows > 0).sum() / len(recent_flows)
-        score_components['consistency'] = consistency * 25
+    if isinstance(data, pd.DataFrame):
+        return [col for col in expected_cols if col in data.columns]
+    elif isinstance(data, pd.Series):
+        return [col for col in expected_cols if col in data.index]
     else:
-        score_components['consistency'] = 0
-    
-    # 3. Ownership Concentration (20 points)
-    total_shares = latest.get('Sec. Num', 1)
-    holding_cols = ['Local IS', 'Local CP', 'Foreign IB']
-    available_holding_cols = get_available_columns(latest, holding_cols)
-    holdings = sum(latest.get(c, 0) for c in available_holding_cols)
-    concentration_pct = (holdings / total_shares) * 100 if total_shares > 0 else 0
-    score_components['concentration'] = min(20, concentration_pct / 3)
-    
-    # 4. Divergence (15 points) - Akumulasi saat harga turun
-    price_change = latest.get('Price_Chg %', 0)
-    if total_inst_flow > 5e9 and price_change <= 0:
-        score_components['divergence'] = 15
-    elif total_inst_flow > 5e9 and price_change < 5:
-        score_components['divergence'] = 10
-    else:
-        score_components['divergence'] = 0
-    
-    # 5. Trend Acceleration (10 points)
-    score_components['acceleration'] = 5  # Base score
-    
-    total_score = sum(score_components.values())
-    return min(100, total_score), score_components
-
-def cluster_smart_money_patterns(df, n_clusters=4, sample_size=200):
-    """🤖 Simple manual clustering"""
-    try:
-        results = []
-        # Filter top stocks by activity to make clustering meaningful
-        top_active = df.groupby('Code')['Total_chg_Rp'].apply(lambda x: x.abs().sum()).nlargest(sample_size).index
-        
-        for code in top_active:
-            df_stock = df[df['Code'] == code].tail(12)  # 1 Year Data
-            if len(df_stock) < 3: 
-                continue
-            
-            # Calculate smart money flow (gunakan kolom value)
-            flow_cols = [c for c in SMART_MONEY_COLS if c in df_stock.columns]
-            retail_cols = [c for c in RETAIL_COLS if c in df_stock.columns]
-            
-            smart_flow = df_stock[flow_cols].sum().sum() if flow_cols else 0
-            retail_flow = df_stock[retail_cols].sum().sum() if retail_cols else 0
-            
-            # Calculate Flow Ratio
-            flow_ratio = smart_flow / abs(retail_flow) if retail_flow != 0 else 1
-            
-            # Simple rule-based clustering
-            if smart_flow > 50e9: 
-                cluster, label = 0, "🚀 Strong Accumulation"
-            elif smart_flow > 10e9 and abs(retail_flow) > 5e9: 
-                cluster, label = 1, "⚔️ Big Fight"
-            elif smart_flow > 5e9: 
-                cluster, label = 2, "🕵️ Stealth Accumulation"
-            elif smart_flow < -20e9: 
-                cluster, label = 3, "⚠️ Big Distribution"
-            else: 
-                cluster, label = 4, "📊 Sideways/Retail"
-            
-            results.append({
-                'Code': code,
-                'Sector': df_stock.iloc[-1].get('Sector', 'N/A'),
-                'Cluster': cluster,
-                'Cluster_Label': label,
-                'Smart_Flow_Miliar': smart_flow / 1e9,
-                'Flow_Ratio': flow_ratio,
-                'Volatility': df_stock['Price'].std() / df_stock['Price'].mean() if df_stock['Price'].mean() > 0 else 0
-            })
-        
-        if not results: 
-            return pd.DataFrame()
-        return pd.DataFrame(results).sort_values('Smart_Flow_Miliar', ascending=False)
-        
-    except Exception as e:
-        print(f"Error in clustering: {e}")
-        return pd.DataFrame()
-
-def track_institutional_footprint(df, window_days=90):
-    """🗺️ Track institutional footprint changes (Monthly Data)"""
-    # Karena data bulanan, window_days dikonversi ke jumlah bulan (approx)
-    window_months = max(2, int(window_days / 30))
-    
-    results = []
-    # Ambil saham dengan data cukup
-    for code in df['Code'].unique():
-        df_stock = df[df['Code'] == code].sort_values('Date')
-        if len(df_stock) < window_months: 
-            continue
-        
-        df_window = df_stock.tail(window_months)
-        
-        # Calculate flow momentum (gunakan kolom value)
-        inst_cols = [c for c in OWNERSHIP_CHG_VAL_COLS if any(x in c for x in ['IS', 'IB', 'PF', 'MF', 'CP'])]
-        available_inst_cols = get_available_columns(df_window, inst_cols)
-        
-        if available_inst_cols:
-            total_inst_flow = df_window[available_inst_cols].sum().sum()
-            
-            if abs(total_inst_flow) > 5e9:  # Minimal 5 Miliar akumulasi/distribusi
-                # Calculate Ownership Change % (Proxy)
-                market_cap_proxy = df_stock.iloc[-1]['Price'] * df_stock.iloc[-1].get('Sec. Num', 1)
-                flow_percentage = (total_inst_flow / market_cap_proxy * 100) if market_cap_proxy > 0 else 0
-                
-                results.append({
-                    'Code': code,
-                    'Sector': df_stock.iloc[-1].get('Sector', 'N/A'),
-                    'Price': df_stock.iloc[-1].get('Price', 0),
-                    'Total_Inst_Flow': total_inst_flow,
-                    'Flow_Percentage': flow_percentage,
-                    'Footprint_Score': min(100, abs(total_inst_flow) / 10e9 * 20)
-                })
-    
-    return pd.DataFrame(results).sort_values('Footprint_Score', ascending=False)
-
-@st.cache_data
-def scan_high_conviction_stocks(df, min_score=75, min_flow=10e9):
-    """🏆 Scan untuk saham dengan conviction tinggi"""
-    results = []
-    
-    # Optimasi: Pre-filter saham yang aktif saja (Flow > Threshold)
-    # Group by code and sum absolute changes to find active stocks
-    activity = df.groupby('Code')['Total_chg_Rp'].apply(lambda x: x.abs().sum())
-    active_stocks = activity[activity > min_flow].index.tolist()
-    
-    for code in active_stocks:
-        df_stock = df[df['Code'] == code].sort_values('Date')
-        if len(df_stock) < 3: 
-            continue
-        
-        latest = df_stock.iloc[-1]
-        
-        # Hitung conviction score
-        score, components = calculate_institutional_conviction(df, code)
-        
-        if score >= min_score:
-            # Gunakan kolom value untuk institutional flow
-            inst_cols = [c for c in OWNERSHIP_CHG_VAL_COLS if any(x in c for x in ['IS', 'IB', 'PF', 'MF', 'CP'])]
-            available_inst_cols = get_available_columns(latest, inst_cols)
-            inst_flow = sum(latest.get(c, 0) for c in available_inst_cols)
-            
-            is_stealth, stealth_details = detect_stealth_accumulation(df, code)
-            is_coordinated, coord_details = detect_coordinated_accumulation(df, code, min_institutions=2)
-            
-            results.append({
-                'Code': code,
-                'Sector': latest.get('Sector', 'N/A'),
-                'Price': latest.get('Price', 0),
-                'Price_Chg_%': latest.get('Price_Chg %', 0),
-                'Conviction_Score': score,
-                'Institutional_Flow': inst_flow,
-                'Is_Stealth': is_stealth,
-                'Is_Coordinated': is_coordinated,
-                'Stealth_Score': stealth_details.get('stealth_score', 0) if is_stealth else 0,
-                'Coordinated_Count': len(coord_details) if is_coordinated else 0
-            })
-    
-    if not results: 
-        return pd.DataFrame()
-    return pd.DataFrame(results).sort_values('Conviction_Score', ascending=False)
+        # Fallback: coba akses sebagai object
+        return [col for col in expected_cols if hasattr(data, col)]
 
 # ==============================================================================
 # 📊 6) EXISTING HELPER FUNCTIONS (DIPERBARUI)
 # ==============================================================================
 
 @st.cache_data
-def calculate_macro_flow(df_filtered):
-    """Hitung flow makro - PERBAIKAN UTAMA DI SINI"""
-    # Gunakan hanya kolom yang tersedia
-    available_cols = get_available_columns(df_filtered, OWNERSHIP_CHG_VAL_COLS)
+def get_stock_ownership_state(df, stock_code):
+    """Ambil data kepemilikan terbaru untuk satu saham - FIXED"""
+    df_stock = df[df['Code'] == stock_code]
+    if df_stock.empty: 
+        return pd.DataFrame(), pd.Series(dtype='object')
     
-    if not available_cols:
-        # Fallback: return empty dataframes
-        net_flow = pd.DataFrame(columns=['Kategori', 'Total Net Flow (Rp)'])
-        cum_flow = pd.DataFrame(columns=['Date', 'Kategori', 'Cumulative Flow (Rp)'])
-        return net_flow, cum_flow
+    latest = df_stock.sort_values('Date').iloc[-1]
     
-    # Hitung net flow per kategori
-    net_flow = df_filtered[available_cols].sum().reset_index()
-    net_flow.columns = ['Kategori', 'Total Net Flow (Rp)']
-    net_flow['Kategori'] = net_flow['Kategori'].str.replace('_Chg_Val', '')
-    net_flow = net_flow.sort_values(by='Total Net Flow (Rp)', ascending=False)
+    # 🔥 PERBAIKAN: get_available_columns bisa handle Series (latest)
+    available_ownership_cols = get_available_columns(latest, OWNERSHIP_COLS)
     
-    # Hitung cumulative flow
-    # Pastikan kolom derived ada
-    if 'Total_Local_chg_Rp' in df_filtered.columns and 'Total_Foreign_chg_Rp' in df_filtered.columns:
-        cum_flow = df_filtered.groupby('Date')[['Total_Local_chg_Rp', 'Total_Foreign_chg_Rp']].sum().cumsum().reset_index()
-        cum_flow = cum_flow.melt('Date', var_name='Kategori', value_name='Cumulative Flow (Rp)')
-        cum_flow['Kategori'] = cum_flow['Kategori'].str.replace('_chg_Rp', ' (Net Rp)')
-    else:
-        # Fallback jika kolom derived tidak ada
-        cum_flow = pd.DataFrame(columns=['Date', 'Kategori', 'Cumulative Flow (Rp)'])
+    if not available_ownership_cols:
+        return pd.DataFrame(), latest
     
-    return net_flow, cum_flow
+    # Ambil data hanya untuk kolom yang tersedia
+    ownership_data = latest[available_ownership_cols]
+    
+    # Buat DataFrame untuk state
+    df_state = pd.DataFrame({
+        'Kategori': available_ownership_cols,
+        'Jumlah Saham': ownership_data.values
+    })
+    
+    return df_state, latest
 
 @st.cache_data
 def calculate_sector_rotation(df_filtered, selected_category):
