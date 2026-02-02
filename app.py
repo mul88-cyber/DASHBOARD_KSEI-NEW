@@ -1421,12 +1421,12 @@ with tab5:
             df_recent = df[df['Date'] >= date_cutoff]
             
             if not df_recent.empty:
+                # 1. Calculate Signals
                 df_sig = calculate_smart_money_signals(df_recent, win, min_acc)
                 
                 if not df_sig.empty:
                     st.markdown(f'<div class="css-card"><div class="card-title">💎 Smart Money Signals ({len(df_sig)})</div>', unsafe_allow_html=True)
                     
-                    # Format dataframe
                     try:
                         df_display = df_sig.copy()
                         format_dict = {'Price': '{:,.0f}', 'Price Chg %': '{:.2f}%', 'Smart Money (Rp)': '{:,.0f}', 'Retail (Rp)': '{:,.0f}'}
@@ -1442,7 +1442,86 @@ with tab5:
                     
                     st.markdown('</div>', unsafe_allow_html=True)
                 else:
-                    st.info("Belum ada sinyal smart money yang terdeteksi")
+                    st.info("Belum ada sinyal smart money yang terdeteksi dengan parameter ini")
+
+                # 2. Clustering Analysis
+                st.markdown('<div class="css-card"><div class="card-title">🤖 Smart Money Clustering Analysis</div>', unsafe_allow_html=True)
+                
+                try:
+                    df_clusters = cluster_smart_money_patterns(df, n_clusters=4, sample_size=300)
+                    
+                    if not df_clusters.empty:
+                        # --- 🔥 FIX: MEMBUAT KOLOM POSITIF UNTUK SIZE CHART ---
+                        # Size tidak boleh negatif, jadi kita ambil nilai absolutnya
+                        df_clusters['Viz_Size'] = df_clusters['Flow_Ratio'].abs()
+                        # Kita fillna(0) untuk jaga-jaga agar tidak error
+                        df_clusters['Viz_Size'] = df_clusters['Viz_Size'].fillna(0)
+
+                        # Scatter Plot Visualization
+                        st.markdown("#### 📈 Cluster Visualization")
+                        
+                        fig_cluster = px.scatter(
+                            df_clusters, 
+                            x='Smart_Flow_Miliar', 
+                            y='Volatility', 
+                            color='Cluster_Label',
+                            size='Viz_Size', # <--- PAKE KOLOM BARU YANG SUDAH DI-ABS
+                            hover_data=['Code', 'Sector', 'Smart_Flow_Miliar', 'Flow_Ratio'],
+                            title="Smart Money Clusters: Flow vs Volatility",
+                            color_discrete_map={
+                                '🚀 Strong Accumulation': '#0D9D58',
+                                '⚔️ Big Fight': '#FF9800',
+                                '🕵️ Stealth Accumulation': '#0066CC',
+                                '⚠️ Big Distribution': '#FF3B30',
+                                '📊 Sideways/Retail': '#A3AED0'
+                            }
+                        )
+                        
+                        # Add reference lines
+                        fig_cluster.add_hline(y=df_clusters['Volatility'].mean(), line_dash="dash", line_color="gray",
+                                            annotation_text="Avg Volatility", annotation_position="bottom right")
+                        fig_cluster.add_vline(x=0, line_dash="dash", line_color="gray")
+                        
+                        fig_cluster.update_layout(
+                            height=500,
+                            xaxis_title="Smart Money Flow (Miliar Rp)",
+                            yaxis_title="Volatility (Std Dev / Mean)",
+                            hovermode='closest'
+                        )
+                        
+                        fig_cluster = update_plotly_layout(fig_cluster)
+                        st.plotly_chart(fig_cluster, use_container_width=True)
+
+                        # Tampilkan Cluster Distribution (Icon Boxes)
+                        st.markdown("#### 📊 Cluster Distribution")
+                        cluster_counts = df_clusters['Cluster_Label'].value_counts()
+                        
+                        col_dist1, col_dist2, col_dist3, col_dist4 = st.columns(4)
+                        cols = [col_dist1, col_dist2, col_dist3, col_dist4]
+                        
+                        for idx, (label, count) in enumerate(cluster_counts.items()):
+                            if idx < len(cols):
+                                with cols[idx]:
+                                    if "Strong" in label: icon, color = "🚀", "#0D9D58"
+                                    elif "Fight" in label: icon, color = "⚔️", "#FF9800"
+                                    elif "Stealth" in label: icon, color = "🕵️", "#0066CC"
+                                    elif "Distribution" in label: icon, color = "⚠️", "#FF3B30"
+                                    else: icon, color = "📊", "#A3AED0"
+                                    
+                                    st.markdown(f"""
+                                        <div style="text-align: center; padding: 10px; background-color: {color}10; border-radius: 10px; border-left: 4px solid {color};">
+                                            <div style="font-size: 24px;">{icon}</div>
+                                            <div style="font-size: 12px; color: {color}; font-weight: bold;">{label}</div>
+                                            <div style="font-size: 20px; font-weight: bold;">{count}</div>
+                                        </div>
+                                    """, unsafe_allow_html=True)
+
+                    else:
+                        st.info("Data clustering tidak cukup.")
+
+                except Exception as e:
+                    st.error(f"Error in clustering visual: {e}")
+
             else:
                 st.info("Tidak ada data recent untuk analisis")
     else:
