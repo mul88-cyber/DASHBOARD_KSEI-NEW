@@ -10,6 +10,7 @@ import io
 from datetime import datetime
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
+from plotly.subplots import make_subplots
 
 # Import library Google
 from google.oauth2.service_account import Credentials
@@ -697,6 +698,237 @@ def create_sankey_chart(df, stock_code, selected_date, mode='Volume'):
                      font_size=14, height=500)
     return update_plotly_layout(fig)
 
+
+# ==============================================================================
+# 🧠 5) ADVANCED INTELLIGENCE LOGIC (THE MISSING BRAINS)
+# ==============================================================================
+
+@st.cache_data
+def calculate_institutional_conviction(df, stock_code, window=3):
+    """
+    Menghitung skor keyakinan institusi (0-100).
+    Logic: Konsistensi Net Buy + Besaran Flow vs Market Cap + Price Action.
+    """
+    df_stock = df[df['Code'] == stock_code].sort_values('Date').tail(window)
+    if df_stock.empty: return 0, {}
+    
+    # 1. Consistency Score (Berapa kali Net Buy dalam window?)
+    # Gunakan kolom Smart Money
+    sm_cols = get_available_columns(df_stock, SMART_MONEY_COLS)
+    if not sm_cols: return 0, {}
+    
+    df_stock['SM_Net'] = df_stock[sm_cols].sum(axis=1)
+    consistency = (df_stock['SM_Net'] > 0).sum() / len(df_stock) * 40 # Max 40 poin
+    
+    # 2. Flow Magnitude Score (Total Flow vs Rata2 Transaksi - simulasi)
+    # Karena tidak ada data volume transaksi harian, kita pakai absolut flow
+    total_flow = df_stock['SM_Net'].sum()
+    magnitude = min(40, (total_flow / 10_000_000_000) * 10) # 10 Miliar = 10 poin, Max 40
+    if total_flow < 0: magnitude = 0 
+    
+    # 3. Price Divergence Score (Bonus jika Flow Positif tapi Harga Belum Naik Banyak)
+    price_chg = df_stock.iloc[-1]['Price'] - df_stock.iloc[0]['Price']
+    price_chg_pct = (price_chg / df_stock.iloc[0]['Price']) * 100 if df_stock.iloc[0]['Price'] > 0 else 0
+    
+    divergence = 0
+    if total_flow > 0:
+        if -5 <= price_chg_pct <= 5: # Akumulasi di area sideways
+            divergence = 20
+        elif price_chg_pct > 5: # Markup phase
+            divergence = 10
+            
+    total_score = consistency + magnitude + divergence
+    
+    details = {
+        'Consistency': consistency,
+        'Magnitude': magnitude,
+        'Divergence': divergence,
+        'Total_Flow': total_flow
+    }
+    
+    return min(100, max(0, total_score)), details
+
+@st.cache_data
+def detect_stealth_accumulation(df, stock_code, window=2):
+    """
+    Mendeteksi akumulasi senyap: Flow Besar, Harga Flat/Turun Tipis.
+    """
+    df_stock = df[df['Code'] == stock_code].sort_values('Date').tail(window)
+    if df_stock.empty: return False, {}
+    
+    sm_cols = get_available_columns(df_stock, SMART_MONEY_COLS)
+    if not sm_cols: return False, {}
+    
+    net_sm_flow = df_stock[sm_cols].sum().sum()
+    
+    start_p = df_stock.iloc[0]['Price']
+    end_p = df_stock.iloc[-1]['Price']
+    pct_chg = ((end_p - start_p) / start_p * 100) if start_p > 0 else 0
+    
+    # LOGIC STEALTH:
+    # 1. Flow Institusi Positif Signifikan (> 5 Miliar misalnya)
+    # 2. Kenaikan harga KECIL (< 3%) atau malah minus dikit
+    is_stealth = (net_sm_flow > 5_000_000_000) and (pct_chg < 3) and (pct_chg > -5)
+    
+    return is_stealth, {'Net_Flow': net_sm_flow, 'Pct_Chg': pct_chg}
+
+@st.cache_data
+def scan_high_conviction_stocks(df, min_score=70, min_flow=5e9):
+    """
+    Scanning seluruh saham untuk mencari High Conviction Score.
+    """
+    # Ambil data bulan terakhir saja untuk efisiensi
+    latest_date = df['Date'].max()
+    # Kita butuh window beberapa bulan ke belakang
+    start_date = latest_date - pd.DateOffset(months=2) 
+    df_recent = df[df['Date'] >= start_date]
+    
+    results = []
+    unique_codes = df_recent['Code'].unique()
+    
+    for code in unique_codes:
+        score, details = calculate_institutional_conviction(df_recent, code)
+        is_stealth, _ = detect_stealth_accumulation(df_recent, code)
+        
+        # Check thresholds
+        if score >= min_score and details.get('Total_Flow', 0) >= min_flow:
+            # Ambil data terakhir untuk display
+            last_row = df_recent[df_recent['Code'] == code].iloc[-1]
+            
+            results.append({
+                'Code': code,
+                'Sector': last_row.get('Sector', 'Others'),
+                'Price': last_row.get('Price', 0),
+                'Price_Chg_%': last_row.get('Price_Chg %', 0),
+                'Conviction_Score': score,
+                'Institutional_Flow': details['Total_Flow'],
+                'Is_Stealth': is_stealth,
+                'Is_Coordinated': False # Placeholder for future logic
+            })
+            
+    return pd.DataFrame(results).sort_values('Conviction_Score', ascending=False)
+
+@st.cache_data
+def cluster_smart_money_patterns(df, n_clusters=4, sample_size=300):
+    """
+    Menggunakan K-Means untuk mengelompokkan saham berdasarkan perilaku Smart Money.
+    Features: Smart Money Flow, Retail Flow, Price Volatility.
+    """
+    # Ambil data agregat per saham (3 bulan terakhir)
+    latest_date = df['Date'].max()
+    start_date = latest_date - pd.DateOffset(months=3)
+    df_recent = df[df['Date'] >= start_date].copy()
+    
+    # Prepare Features per Stock
+    stock_features = []
+    
+    sm_cols = get_available_columns(df_recent, SMART_MONEY_COLS)
+    ret_cols = get_available_columns(df_recent, RETAIL_COLS)
+    
+    if not sm_cols: return pd.DataFrame()
+
+    grouped = df_recent.groupby('Code')
+    
+    for code, data in grouped:
+        if len(data) < 2: continue
+        
+        sm_flow = data[sm_cols].sum().sum()
+        ret_flow = data[ret_cols].sum().sum() if ret_cols else 0
+        market_cap_proxy = data['Price'].mean() * data['Total_Shares'].mean() if 'Total_Shares' in data.columns else 1e12
+        
+        # Volatility (Std Dev of Price / Mean Price)
+        volatility = data['Price'].std() / data['Price'].mean() if data['Price'].mean() > 0 else 0
+        
+        # Ratio Flow terhadap Market Cap (agar saham kecil vs besar apple-to-apple)
+        # Karena market cap proxy kasar, kita pakai log flow saja atau raw flow untuk sample sejenis
+        
+        stock_features.append({
+            'Code': code,
+            'Sector': data.iloc[-1].get('Sector', 'Others'),
+            'Smart_Flow_Raw': sm_flow,
+            'Retail_Flow_Raw': ret_flow,
+            'Volatility': volatility,
+            'Flow_Ratio': sm_flow / market_cap_proxy if market_cap_proxy > 0 else 0
+        })
+    
+    df_feat = pd.DataFrame(stock_features)
+    if df_feat.empty: return pd.DataFrame()
+    
+    # Filter sample size (top liquid / top flow)
+    df_feat['Abs_Flow'] = df_feat['Smart_Flow_Raw'].abs()
+    df_feat = df_feat.nlargest(sample_size, 'Abs_Flow')
+    
+    # Normalize Data for K-Means
+    features = ['Smart_Flow_Raw', 'Volatility']
+    scaler = StandardScaler()
+    X = scaler.fit_transform(df_feat[features].fillna(0))
+    
+    # Clustering
+    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+    df_feat['Cluster'] = kmeans.fit_predict(X)
+    
+    # Labeling Clusters (Automated Naming)
+    # Kita cari rata-rata flow per cluster untuk menamai
+    cluster_stats = df_feat.groupby('Cluster')['Smart_Flow_Raw'].mean().sort_values(ascending=False)
+    
+    # Assign names based on rank
+    labels = {}
+    sorted_clusters = cluster_stats.index.tolist()
+    
+    if n_clusters >= 3:
+        labels[sorted_clusters[0]] = "🚀 Strong Accumulation"
+        labels[sorted_clusters[-1]] = "⚠️ Big Distribution"
+        
+        # Tengah-tengah
+        for c in sorted_clusters[1:-1]:
+            mean_flow = cluster_stats[c]
+            mean_vol = df_feat[df_feat['Cluster'] == c]['Volatility'].mean()
+            if mean_flow > 0:
+                labels[c] = "🕵️ Stealth Accumulation" if mean_vol < df_feat['Volatility'].mean() else "⚔️ Big Fight"
+            else:
+                labels[c] = "📊 Sideways/Retail"
+    
+    df_feat['Cluster_Label'] = df_feat['Cluster'].map(labels).fillna("Unknown")
+    df_feat['Smart_Flow_Miliar'] = df_feat['Smart_Flow_Raw'] / 1e9
+    
+    return df_feat
+
+@st.cache_data
+def track_institutional_footprint(df, window_days=90):
+    """
+    Tracking pergerakan kumulatif institusi dalam window tertentu.
+    """
+    latest_date = df['Date'].max()
+    start_date = latest_date - pd.DateOffset(days=window_days)
+    df_window = df[df['Date'] >= start_date]
+    
+    sm_cols = get_available_columns(df_window, SMART_MONEY_COLS)
+    if not sm_cols: return pd.DataFrame()
+    
+    results = []
+    for code, data in df_window.groupby('Code'):
+        total_inst_flow = data[sm_cols].sum().sum()
+        
+        # Score sederhana: Flow dibagi harga (proxy volume power)
+        last_price = data.iloc[-1]['Price']
+        if last_price == 0: continue
+            
+        # Berapa % flow ini terhadap estimasi nilai (kasar)
+        # Footprint score 0-100
+        score = min(100, (total_inst_flow / (last_price * 1_000_000)) * 10) # Arbitrary scaling
+        if total_inst_flow < 0: score = 0
+        
+        results.append({
+            'Code': code,
+            'Sector': data.iloc[-1].get('Sector', 'Others'),
+            'Price': last_price,
+            'Total_Inst_Flow': total_inst_flow,
+            'Flow_Percentage': (total_inst_flow / 1e11) * 100, # Dummy pct for visual
+            'Footprint_Score': score
+        })
+        
+    return pd.DataFrame(results).sort_values('Total_Inst_Flow', ascending=False)
+
 # ==============================================================================
 # 💎 7) LAYOUT UTAMA & SIDEBAR
 # ==============================================================================
@@ -977,6 +1209,49 @@ with tab3:
                     st.error(f"Error creating Sankey chart: {e}")
                     st.info("Coba pilih saham atau bulan lain.")
                 
+                st.markdown('</div>', unsafe_allow_html=True)
+
+                # --- [NEW] CHART HARGA VS FLOW KUMULATIF ---
+                st.markdown('<div class="css-card"><div class="card-title">📈 Price Action vs Smart Money Flow</div>', unsafe_allow_html=True)
+                
+                # Prepare Data
+                df_chart = df_stock_all.copy()
+                
+                # Hitung Kumulatif Flow Smart Money
+                sm_cols_chart = get_available_columns(df_chart, SMART_MONEY_COLS)
+                if sm_cols_chart:
+                    df_chart['Smart_Money_Net'] = df_chart[sm_cols_chart].sum(axis=1)
+                    df_chart['Cum_SM_Flow'] = df_chart['Smart_Money_Net'].cumsum()
+                    
+                    # Create Dual Axis Chart
+                    fig_corr = make_subplots(specs=[[{"secondary_y": True}]])
+                    
+                    # 1. Price Line
+                    fig_corr.add_trace(
+                        go.Scatter(x=df_chart['Date'], y=df_chart['Price'], name="Price",
+                                   line=dict(color='#2B3674', width=2)),
+                        secondary_y=False
+                    )
+                    
+                    # 2. Cumulative Flow Line
+                    fig_corr.add_trace(
+                        go.Scatter(x=df_chart['Date'], y=df_chart['Cum_SM_Flow'], name="Inst. Accumulation (Rp)",
+                                   line=dict(color='#05CD99', width=2, dash='dot'), fill='tozeroy', fillcolor='rgba(5, 205, 153, 0.1)'),
+                        secondary_y=True
+                    )
+                    
+                    fig_corr.update_layout(
+                        title=f"Korelasi Harga vs Akumulasi Institusi ({sel_stock})",
+                        height=450,
+                        hovermode="x unified",
+                        legend=dict(orientation="h", y=1.1)
+                    )
+                    fig_corr = update_plotly_layout(fig_corr)
+                    st.plotly_chart(fig_corr, use_container_width=True)
+                    
+                    st.caption("💡 **Tips:** Jika Garis Putus-putus (Flow) NAIK tapi Garis Biru (Harga) TURUN/FLAT -> **Divergence (Bullish)**")
+                else:
+                    st.warning("Data Smart Money tidak cukup untuk membuat chart.")
                 st.markdown('</div>', unsafe_allow_html=True)
 
                 # Monthly History dengan error handling
