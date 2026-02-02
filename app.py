@@ -879,82 +879,130 @@ with tab3:
         
         if stocks_avail:
             sel_stock = st.selectbox("🔎 Cari Kode Saham:", stocks_avail, 
-                                   index=stocks_avail.index('BBRI') if 'BBRI' in stocks_avail else 0)
+                                   index=stocks_avail.index('BBRI') if 'BBRI' in stocks_avail else 0,
+                                   key="tab3_stock")
             
-            df_stock_all = df[df['Code'] == sel_stock].sort_values('Date')
-            
-            if selected_month_str:
-                df_stock_month = df_stock_all[df_stock_all['Date'].dt.strftime('%Y-%m') == selected_month_str]
-            else:
-                df_stock_month = pd.DataFrame()
-            
-            if df_stock_month.empty and not df_stock_all.empty:
-                st.warning(f"Data {sel_stock} bulan {selected_month_str} kosong. Menggunakan data terakhir tersedia.")
-                df_state, last_row = get_stock_ownership_state(df_stock_all, sel_stock)
-                date_for_display = df_stock_all['Date'].max()
-            elif not df_stock_month.empty:
-                df_state, last_row = get_stock_ownership_state(df_stock_month, sel_stock)
-                date_for_display = selected_month_str
-            else:
-                st.error(f"Tidak ada data untuk saham {sel_stock}")
-                st.stop()
-            
-            # Display metrics
-            k1, k2, k3, k4 = st.columns(4)
-            
-            k1.markdown(f"""<div class="css-card" style="text-align:center;"><div style="font-size:14px; color:#A3AED0;">Harga Terakhir</div><div style="font-size:24px; font-weight:700; color:#2B3674;">Rp {last_row['Price']:,.0f}</div></div>""", unsafe_allow_html=True)
-            
-            flow_val = last_row.get('Total_chg_Rp', 0)
-            flow_color = '#05CD99' if flow_val > 0 else '#EE5D50'
-            k2.markdown(f"""<div class="css-card" style="text-align:center;"><div style="font-size:14px; color:#A3AED0;">Flow {date_for_display}</div><div style="font-size:24px; font-weight:700; color: {flow_color};">{format_id_short(flow_val, True)}</div></div>""", unsafe_allow_html=True)
-            
-            conviction_score, _ = calculate_institutional_conviction(df, sel_stock)
-            badge_color = "badge-high" if conviction_score >= 80 else "badge-medium" if conviction_score >= 60 else "badge-low"
-            k3.markdown(f"""<div class="css-card" style="text-align:center;"><div style="font-size:14px; color:#A3AED0;">Conviction Score</div><div style="font-size:24px; font-weight:700; color:#2B3674;">{conviction_score:.0f}</div><div><span class="{badge_color}">{'HIGH' if conviction_score >= 80 else 'MEDIUM' if conviction_score >= 60 else 'LOW'}</span></div></div>""", unsafe_allow_html=True)
-            
-            is_stealth, stealth_details = detect_stealth_accumulation(df, sel_stock)
-            k4.markdown(f"""<div class="css-card" style="text-align:center;"><div style="font-size:14px; color:#A3AED0;">Pattern Detection</div><div style="font-size:18px; font-weight:700; color:#2B3674;">{last_row.get('Sector','-')}</div><div style="font-size:12px; margin-top:5px;">{'🕵️ Stealth Detected' if is_stealth else 'Normal Pattern'}</div></div>""", unsafe_allow_html=True)
-
-            # Sankey Chart
-            st.markdown('<div class="css-card">', unsafe_allow_html=True)
-            mode_sankey = st.radio("Mode Visualisasi:", ["Value (Rp)", "Volume (Lot)"], horizontal=True, label_visibility="collapsed")
-            mode_key = 'Value' if 'Rp' in mode_sankey else 'Volume'
-            
-            # Pilih tanggal untuk sankey
-            if not df_stock_month.empty:
-                sankey_date = df_stock_month.iloc[0]['Date']
-            elif not df_stock_all.empty:
-                sankey_date = df_stock_all['Date'].max()
-            else:
-                sankey_date = None
-            
-            if sankey_date is not None:
-                fig_sankey = create_sankey_chart(df, sel_stock, sankey_date, mode=mode_key)
-                if fig_sankey: 
-                    st.plotly_chart(fig_sankey, use_container_width=True)
-                else: 
-                    st.info("Pergerakan tidak cukup signifikan untuk Sankey.")
-            else:
-                st.info("Tidak ada data untuk visualisasi Sankey")
-            st.markdown('</div>', unsafe_allow_html=True)
-
-            # Monthly History
-            st.markdown('<div class="css-card"><div class="card-title">📅 Monthly History</div>', unsafe_allow_html=True)
-            df_hist = calculate_monthly_change_table(df_stock_all)
-            if not df_hist.empty:
+            if sel_stock:
+                df_stock_all = df[df['Code'] == sel_stock].sort_values('Date')
+                
+                if selected_month_str:
+                    df_stock_month = df_stock_all[df_stock_all['Date'].dt.strftime('%Y-%m') == selected_month_str]
+                else:
+                    df_stock_month = pd.DataFrame()
+                
+                if df_stock_month.empty and not df_stock_all.empty:
+                    st.warning(f"Data {sel_stock} bulan {selected_month_str} kosong. Menggunakan data terakhir tersedia.")
+                    df_state, last_row = get_stock_ownership_state(df_stock_all, sel_stock)
+                    date_for_display = df_stock_all['Date'].max().strftime('%b %Y')
+                elif not df_stock_month.empty:
+                    df_state, last_row = get_stock_ownership_state(df_stock_month, sel_stock)
+                    date_for_display = selected_month_str
+                else:
+                    st.error(f"Tidak ada data untuk saham {sel_stock}")
+                    st.stop()
+                
+                # Display metrics dengan try-except untuk handling error
+                k1, k2, k3, k4 = st.columns(4)
+                
+                # Metric 1: Harga
                 try:
-                    # Format kolom yang tersedia
-                    available_hist_cols = [col for col in OWNERSHIP_CHG_VOL_COLS if col in df_hist.columns]
-                    if available_hist_cols:
-                        styled_df = df_hist.style.format("{:,.0f}", subset=available_hist_cols)
-                        st.dataframe(styled_df, use_container_width=True, hide_index=True)
+                    price = float(last_row.get('Price', 0))
+                    k1.markdown(f"""<div class="css-card" style="text-align:center;"><div style="font-size:14px; color:#A3AED0;">Harga Terakhir</div><div style="font-size:24px; font-weight:700; color:#2B3674;">Rp {price:,.0f}</div></div>""", unsafe_allow_html=True)
+                except:
+                    k1.markdown(f"""<div class="css-card" style="text-align:center;"><div style="font-size:14px; color:#A3AED0;">Harga Terakhir</div><div style="font-size:24px; font-weight:700; color:#2B3674;">N/A</div></div>""", unsafe_allow_html=True)
+                
+                # Metric 2: Flow
+                try:
+                    flow_val = float(last_row.get('Total_chg_Rp', 0))
+                    flow_color = '#05CD99' if flow_val > 0 else '#EE5D50'
+                    k2.markdown(f"""<div class="css-card" style="text-align:center;"><div style="font-size:14px; color:#A3AED0;">Flow {date_for_display}</div><div style="font-size:24px; font-weight:700; color: {flow_color};">{format_id_short(flow_val, True)}</div></div>""", unsafe_allow_html=True)
+                except:
+                    k2.markdown(f"""<div class="css-card" style="text-align:center;"><div style="font-size:14px; color:#A3AED0;">Flow {date_for_display}</div><div style="font-size:24px; font-weight:700; color: #A3AED0;">N/A</div></div>""", unsafe_allow_html=True)
+                
+                # Metric 3: Conviction Score (DENGAN ERROR HANDLING)
+                try:
+                    conviction_score, conviction_details = calculate_institutional_conviction(df, sel_stock)
+                    
+                    # Determine badge color
+                    if conviction_score >= 80:
+                        badge_color = "badge-high"
+                        badge_text = "HIGH"
+                    elif conviction_score >= 60:
+                        badge_color = "badge-medium"
+                        badge_text = "MEDIUM"
                     else:
-                        st.dataframe(df_hist, use_container_width=True, hide_index=True)
+                        badge_color = "badge-low"
+                        badge_text = "LOW"
+                    
+                    k3.markdown(f"""<div class="css-card" style="text-align:center;"><div style="font-size:14px; color:#A3AED0;">Conviction Score</div><div style="font-size:24px; font-weight:700; color:#2B3674;">{conviction_score:.0f}</div><div><span class="{badge_color}">{badge_text}</span></div></div>""", unsafe_allow_html=True)
                 except Exception as e:
-                    st.dataframe(df_hist, use_container_width=True, hide_index=True)
+                    # Fallback jika fungsi error
+                    print(f"Error calculating conviction score: {e}")
+                    k3.markdown(f"""<div class="css-card" style="text-align:center;"><div style="font-size:14px; color:#A3AED0;">Conviction Score</div><div style="font-size:24px; font-weight:700; color:#A3AED0;">N/A</div><div><span class="badge-low">ERROR</span></div></div>""", unsafe_allow_html=True)
+                    conviction_score = 0
+                
+                # Metric 4: Pattern Detection (DENGAN ERROR HANDLING)
+                try:
+                    is_stealth, stealth_details = detect_stealth_accumulation(df, sel_stock)
+                    sector = last_row.get('Sector', '-')
+                    
+                    k4.markdown(f"""<div class="css-card" style="text-align:center;"><div style="font-size:14px; color:#A3AED0;">Pattern Detection</div><div style="font-size:18px; font-weight:700; color:#2B3674;">{sector}</div><div style="font-size:12px; margin-top:5px;">{'🕵️ Stealth Detected' if is_stealth else 'Normal Pattern'}</div></div>""", unsafe_allow_html=True)
+                except Exception as e:
+                    print(f"Error in pattern detection: {e}")
+                    k4.markdown(f"""<div class="css-card" style="text-align:center;"><div style="font-size:14px; color:#A3AED0;">Pattern Detection</div><div style="font-size:18px; font-weight:700; color:#2B3674;">-</div><div style="font-size:12px; margin-top:5px;">Error</div></div>""", unsafe_allow_html=True)
+
+                # Sankey Chart dengan error handling
+                st.markdown('<div class="css-card">', unsafe_allow_html=True)
+                mode_sankey = st.radio("Mode Visualisasi:", ["Value (Rp)", "Volume (Lot)"], horizontal=True, label_visibility="collapsed")
+                mode_key = 'Value' if 'Rp' in mode_sankey else 'Volume'
+                
+                try:
+                    # Pilih tanggal untuk sankey
+                    if not df_stock_month.empty:
+                        sankey_date = df_stock_month.iloc[0]['Date']
+                    elif not df_stock_all.empty:
+                        sankey_date = df_stock_all['Date'].max()
+                    else:
+                        sankey_date = None
+                    
+                    if sankey_date is not None:
+                        fig_sankey = create_sankey_chart(df, sel_stock, sankey_date, mode=mode_key)
+                        if fig_sankey: 
+                            st.plotly_chart(fig_sankey, use_container_width=True)
+                        else: 
+                            st.info("Pergerakan tidak cukup signifikan untuk Sankey.")
+                    else:
+                        st.info("Tidak ada data untuk visualisasi Sankey")
+                except Exception as e:
+                    st.error(f"Error creating Sankey chart: {e}")
+                    st.info("Coba pilih saham atau bulan lain.")
+                
+                st.markdown('</div>', unsafe_allow_html=True)
+
+                # Monthly History dengan error handling
+                st.markdown('<div class="css-card"><div class="card-title">📅 Monthly History</div>', unsafe_allow_html=True)
+                try:
+                    df_hist = calculate_monthly_change_table(df_stock_all)
+                    if not df_hist.empty:
+                        # Format kolom yang tersedia
+                        available_hist_cols = [col for col in OWNERSHIP_CHG_VOL_COLS if col in df_hist.columns]
+                        if available_hist_cols:
+                            try:
+                                styled_df = df_hist.style.format("{:,.0f}", subset=available_hist_cols)
+                                st.dataframe(styled_df, use_container_width=True, hide_index=True)
+                            except:
+                                st.dataframe(df_hist, use_container_width=True, hide_index=True)
+                        else:
+                            st.dataframe(df_hist, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("Tidak ada data history")
+                except Exception as e:
+                    st.error(f"Error loading monthly history: {e}")
+                    st.info("Data history tidak tersedia")
+                
+                st.markdown('</div>', unsafe_allow_html=True)
             else:
-                st.info("Tidak ada data history")
-            st.markdown('</div>', unsafe_allow_html=True)
+                st.info("Pilih saham untuk melihat detail")
         else:
             st.warning("Tidak ada data saham tersedia")
     else:
