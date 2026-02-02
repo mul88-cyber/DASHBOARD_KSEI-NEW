@@ -1211,34 +1211,84 @@ with tab7:
         
         try:
             with st.spinner("Scanning high conviction stocks..."):
-                df_high_conviction = scan_high_conviction_stocks(df, min_score=conviction_threshold, min_flow=5e9)
-            
-            if not df_high_conviction.empty:
-                df_display = df_high_conviction.copy()
+                def scan_high_conviction_stocks(df, min_score=75, min_flow=10e9):
+                """🏆 Scan untuk saham dengan conviction tinggi - SIMPLIFIED VERSION"""
+                results = []
                 
-                # Format institutional flow
-                if 'Institutional_Flow' in df_display.columns:
-                    df_display['Institutional_Flow_Formatted'] = df_display['Institutional_Flow'].apply(
-                        lambda x: format_id_short(x, True) if pd.notna(x) else "N/A"
-                    )
-                
-                # Pilih kolom untuk display
-                display_cols = ['Code', 'Sector', 'Price', 'Conviction_Score', 
-                              'Institutional_Flow_Formatted', 'Is_Stealth', 'Is_Coordinated']
-                
-                # Filter kolom yang tersedia
-                available_display_cols = [col for col in display_cols if col in df_display.columns]
-                
-                if available_display_cols:
-                    st.dataframe(df_display[available_display_cols], use_container_width=True, hide_index=True)
-                else:
-                    st.info("Tidak ada kolom yang tersedia untuk display")
-            else:
-                st.info(f"Tidak ada saham dengan conviction score ≥ {conviction_threshold}")
-                
-        except Exception as e:
-            st.error(f"Error scanning high conviction stocks: {str(e)}")
-            st.info("Coba turunkan threshold atau refresh data")
+                try:
+                    # Validasi input
+                    if df.empty:
+                        return pd.DataFrame()
+                    
+                    if 'Code' not in df.columns or 'Total_chg_Rp' not in df.columns:
+                        return pd.DataFrame()
+                    
+                    # Ambil saham unik
+                    unique_codes = df['Code'].unique()
+                    
+                    # Limit untuk performance
+                    sample_size = min(100, len(unique_codes))
+                    sampled_codes = list(unique_codes)[:sample_size]
+                    
+                    for code in sampled_codes:
+                        try:
+                            # Filter data untuk saham ini
+                            df_stock = df[df['Code'] == code].sort_values('Date')
+                            if df_stock.empty or len(df_stock) < 3:
+                                continue
+                            
+                            latest = df_stock.iloc[-1]
+                            
+                            # Hitung conviction score (gunakan versi simple)
+                            score, _ = calculate_institutional_conviction(df, code)
+                            
+                            # Cek jika memenuhi threshold
+                            if score >= min_score:
+                                # Hitung institutional flow (simplified)
+                                inst_flow = 0
+                                if 'Total_chg_Rp' in latest:
+                                    inst_flow = latest['Total_chg_Rp']
+                                
+                                # Deteksi pattern (simplified)
+                                is_stealth = False
+                                is_coordinated = False
+                                
+                                # Simple stealth detection: flow konsisten positif
+                                if len(df_stock) >= 3:
+                                    recent_flows = df_stock.tail(3)['Total_chg_Rp'].tolist()
+                                    positive_count = sum(1 for f in recent_flows if f > 1e9)
+                                    is_stealth = (positive_count >= 2)
+                                
+                                # Simple coordinated detection: flow besar di bulan ini
+                                if 'Total_chg_Rp' in latest and abs(latest['Total_chg_Rp']) > 20e9:
+                                    is_coordinated = True
+                                
+                                results.append({
+                                    'Code': code,
+                                    'Sector': latest.get('Sector', 'N/A'),
+                                    'Price': latest.get('Price', 0),
+                                    'Price_Chg_%': latest.get('Price_Chg %', 0),
+                                    'Conviction_Score': score,
+                                    'Institutional_Flow': inst_flow,
+                                    'Is_Stealth': is_stealth,
+                                    'Is_Coordinated': is_coordinated
+                                })
+                                
+                        except Exception as e:
+                            # Skip saham jika error
+                            continue
+                    
+                    # Convert to DataFrame
+                    if results:
+                        df_result = pd.DataFrame(results)
+                        df_result = df_result.sort_values('Conviction_Score', ascending=False)
+                        return df_result
+                    else:
+                        return pd.DataFrame()
+                        
+                except Exception as e:
+                    print(f"Error in scan_high_conviction_stocks: {e}")
+                    return pd.DataFrame()
         
         st.markdown('</div>', unsafe_allow_html=True)
         
