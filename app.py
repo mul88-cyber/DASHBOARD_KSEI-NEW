@@ -1206,114 +1206,368 @@ with tab7:
     if not df.empty:
         st.markdown('<div class="header-banner" style="margin-bottom:20px; padding:20px;"><div class="header-title">🎯 Institutional Intelligence Engine</div></div>', unsafe_allow_html=True)
         
-        # High Conviction Stocks - DENGAN ERROR HANDLING
+        # 1. High Conviction Stocks
         st.markdown('<div class="css-card"><div class="card-title">🏆 High Conviction Stocks</div>', unsafe_allow_html=True)
         
+        # Filter settings
+        col_filter1, col_filter2 = st.columns(2)
+        with col_filter1:
+            conv_thresh = st.slider("Minimum Conviction Score", 50, 100, conviction_threshold, 5,
+                                  help="Filter saham dengan score conviction minimal")
+        with col_filter2:
+            min_flow_filter = st.number_input("Min Institutional Flow (Rp Miliar)", 
+                                            value=5.0, step=1.0, format="%.1f") * 1e9
+        
         try:
-            with st.spinner("Scanning high conviction stocks..."):
-                def scan_high_conviction_stocks(df, min_score=75, min_flow=10e9):
-            """🏆 Scan untuk saham dengan conviction tinggi - SIMPLIFIED VERSION"""
-            results = []
+            with st.spinner("🔍 Scanning high conviction stocks..."):
+                # Panggil fungsi dengan error handling
+                df_high_conviction = scan_high_conviction_stocks(df, min_score=conv_thresh, min_flow=min_flow_filter)
             
-            try:
-                # Validasi input
-                if df.empty:
-                    return pd.DataFrame()
+            if not df_high_conviction.empty:
+                st.success(f"✅ Ditemukan {len(df_high_conviction)} saham dengan conviction ≥ {conv_thresh}")
                 
-                if 'Code' not in df.columns or 'Total_chg_Rp' not in df.columns:
-                    return pd.DataFrame()
+                # Tampilkan metrics summary
+                col_sum1, col_sum2, col_sum3 = st.columns(3)
+                with col_sum1:
+                    avg_score = df_high_conviction['Conviction_Score'].mean()
+                    st.metric("Rata-rata Score", f"{avg_score:.1f}")
+                with col_sum2:
+                    stealth_count = df_high_conviction['Is_Stealth'].sum() if 'Is_Stealth' in df_high_conviction.columns else 0
+                    st.metric("Stealth Patterns", f"{stealth_count}")
+                with col_sum3:
+                    coord_count = df_high_conviction['Is_Coordinated'].sum() if 'Is_Coordinated' in df_high_conviction.columns else 0
+                    st.metric("Coordinated Moves", f"{coord_count}")
                 
-                # Ambil saham unik
-                unique_codes = df['Code'].unique()
+                # Prepare data for display
+                df_display = df_high_conviction.copy()
                 
-                # Limit untuk performance
-                sample_size = min(100, len(unique_codes))
-                sampled_codes = list(unique_codes)[:sample_size]
+                # Format columns
+                if 'Price' in df_display.columns:
+                    df_display['Price'] = df_display['Price'].apply(lambda x: f"Rp {x:,.0f}" if pd.notna(x) else "N/A")
                 
-                for code in sampled_codes:
-                    try:
-                        # Filter data untuk saham ini
-                        df_stock = df[df['Code'] == code].sort_values('Date')
-                        if df_stock.empty or len(df_stock) < 3:
-                            continue
-                        
-                        latest = df_stock.iloc[-1]
-                        
-                        # Hitung conviction score (gunakan versi simple)
-                        score, _ = calculate_institutional_conviction(df, code)
-                        
-                        # Cek jika memenuhi threshold
-                        if score >= min_score:
-                            # Hitung institutional flow (simplified)
-                            inst_flow = 0
-                            if 'Total_chg_Rp' in latest:
-                                inst_flow = latest['Total_chg_Rp']
-                            
-                            # Deteksi pattern (simplified)
-                            is_stealth = False
-                            is_coordinated = False
-                            
-                            # Simple stealth detection: flow konsisten positif
-                            if len(df_stock) >= 3:
-                                recent_flows = df_stock.tail(3)['Total_chg_Rp'].tolist()
-                                positive_count = sum(1 for f in recent_flows if f > 1e9)
-                                is_stealth = (positive_count >= 2)
-                            
-                            # Simple coordinated detection: flow besar di bulan ini
-                            if 'Total_chg_Rp' in latest and abs(latest['Total_chg_Rp']) > 20e9:
-                                is_coordinated = True
-                            
-                            results.append({
-                                'Code': code,
-                                'Sector': latest.get('Sector', 'N/A'),
-                                'Price': latest.get('Price', 0),
-                                'Price_Chg_%': latest.get('Price_Chg %', 0),
-                                'Conviction_Score': score,
-                                'Institutional_Flow': inst_flow,
-                                'Is_Stealth': is_stealth,
-                                'Is_Coordinated': is_coordinated
-                            })
-                            
-                    except Exception as e:
-                        # Skip saham jika error
-                        continue
+                if 'Institutional_Flow' in df_display.columns:
+                    df_display['Institutional_Flow_Formatted'] = df_display['Institutional_Flow'].apply(
+                        lambda x: format_id_short(x, True) if pd.notna(x) else "N/A"
+                    )
                 
-                # Convert to DataFrame
-                if results:
-                    df_result = pd.DataFrame(results)
-                    df_result = df_result.sort_values('Conviction_Score', ascending=False)
-                    return df_result
-                else:
-                    return pd.DataFrame()
+                if 'Price_Chg_%' in df_display.columns:
+                    df_display['Price_Chg_%'] = df_display['Price_Chg_%'].apply(
+                        lambda x: f"{x:.2f}%" if pd.notna(x) else "N/A"
+                    )
+                
+                # Select and rename columns for display
+                display_map = {
+                    'Code': 'Kode',
+                    'Sector': 'Sektor',
+                    'Price': 'Harga',
+                    'Price_Chg_%': 'Perubahan %',
+                    'Conviction_Score': 'Conviction',
+                    'Institutional_Flow_Formatted': 'Flow Institusi',
+                    'Is_Stealth': 'Stealth?',
+                    'Is_Coordinated': 'Koordinasi?'
+                }
+                
+                # Filter available columns
+                available_cols = {}
+                for orig, new in display_map.items():
+                    if orig in df_display.columns:
+                        available_cols[orig] = new
+                
+                if available_cols:
+                    df_display = df_display[list(available_cols.keys())]
+                    df_display = df_display.rename(columns=available_cols)
                     
-            except Exception as e:
-                print(f"Error in scan_high_conviction_stocks: {e}")
-                return pd.DataFrame()
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Smart Money Clustering - DENGAN ERROR HANDLING
-        st.markdown('<div class="css-card"><div class="card-title">🤖 Smart Money Clustering</div>', unsafe_allow_html=True)
-        
-        try:
-            with st.spinner("Clustering smart money patterns..."):
-                df_clusters = cluster_smart_money_patterns(df, n_clusters=4)
-            
-            if not df_clusters.empty:
-                fig_cluster = px.scatter(df_clusters, x='Smart_Flow_Miliar', y='Volatility', 
-                                        color='Cluster_Label', hover_data=['Code', 'Sector'], 
-                                        title="Smart Money Clusters")
-                st.plotly_chart(update_plotly_layout(fig_cluster), use_container_width=True)
+                    # Style the dataframe
+                    def highlight_conviction(val):
+                        try:
+                            val_float = float(val)
+                            if val_float >= 90:
+                                return 'background-color: #D6F5E3; color: #0D9D58; font-weight: bold;'
+                            elif val_float >= 80:
+                                return 'background-color: #FFF4E5; color: #FF9800; font-weight: bold;'
+                            elif val_float >= 70:
+                                return 'background-color: #FFE5E5; color: #FF3B30; font-weight: bold;'
+                        except:
+                            pass
+                        return ''
+                    
+                    def highlight_bool(val):
+                        if isinstance(val, bool):
+                            if val:
+                                return 'background-color: #D6F5E3; color: #0D9D58; font-weight: bold; text-align: center;'
+                            else:
+                                return 'text-align: center;'
+                        return ''
+                    
+                    # Apply styling
+                    styled_df = df_display.style
+                    
+                    if 'Conviction' in df_display.columns:
+                        styled_df = styled_df.applymap(highlight_conviction, subset=['Conviction'])
+                    
+                    if 'Stealth?' in df_display.columns:
+                        styled_df = styled_df.applymap(highlight_bool, subset=['Stealth?'])
+                    
+                    if 'Koordinasi?' in df_display.columns:
+                        styled_df = styled_df.applymap(highlight_bool, subset=['Koordinasi?'])
+                    
+                    # Display the dataframe
+                    st.dataframe(
+                        styled_df,
+                        use_container_width=True,
+                        hide_index=True,
+                        height=min(400, len(df_display) * 35 + 38)
+                    )
+                    
+                    # Download button
+                    csv = df_high_conviction.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="📥 Download High Conviction Stocks",
+                        data=csv,
+                        file_name=f"high_conviction_stocks_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+                else:
+                    st.warning("Tidak ada kolom yang tersedia untuk ditampilkan")
+                    
             else:
-                st.info("Tidak ada data untuk clustering")
+                st.info(f"📭 Tidak ditemukan saham dengan conviction score ≥ {conv_thresh}")
+                st.caption("Coba turunkan threshold atau filter yang lebih longgar")
                 
         except Exception as e:
-            st.error(f"Error in clustering: {str(e)}")
-            st.info("Clustering tidak tersedia saat ini")
+            st.error(f"❌ Error scanning high conviction stocks: {str(e)}")
+            st.info("⚠️ Coba refresh data atau turunkan threshold")
         
         st.markdown('</div>', unsafe_allow_html=True)
+        
+        # 2. Smart Money Clustering
+        st.markdown('<div class="css-card"><div class="card-title">🤖 Smart Money Clustering Analysis</div>', unsafe_allow_html=True)
+        
+        col_clust1, col_clust2 = st.columns(2)
+        with col_clust1:
+            n_clusters = st.selectbox("Number of Clusters", [3, 4, 5, 6], index=1,
+                                    help="Jumlah cluster untuk grouping pattern")
+        with col_clust2:
+            sample_size = st.slider("Sample Size", 50, 500, 200, 50,
+                                  help="Jumlah saham yang dianalisis (untuk performance)")
+        
+        try:
+            with st.spinner("🤖 Processing clustering analysis..."):
+                df_clusters = cluster_smart_money_patterns(df, n_clusters=n_clusters, sample_size=sample_size)
+            
+            if not df_clusters.empty:
+                # Display cluster distribution
+                st.markdown("#### 📊 Cluster Distribution")
+                cluster_counts = df_clusters['Cluster_Label'].value_counts()
+                
+                col_dist1, col_dist2, col_dist3, col_dist4 = st.columns(4)
+                cols = [col_dist1, col_dist2, col_dist3, col_dist4]
+                
+                for idx, (label, count) in enumerate(cluster_counts.items()):
+                    if idx < len(cols):
+                        with cols[idx]:
+                            # Determine icon based on label
+                            if "Strong" in label:
+                                icon, color = "🚀", "#0D9D58"
+                            elif "Fight" in label:
+                                icon, color = "⚔️", "#FF9800"
+                            elif "Stealth" in label:
+                                icon, color = "🕵️", "#0066CC"
+                            elif "Distribution" in label:
+                                icon, color = "⚠️", "#FF3B30"
+                            else:
+                                icon, color = "📊", "#A3AED0"
+                            
+                            st.markdown(f"""
+                                <div style="text-align: center; padding: 10px; background-color: {color}10; border-radius: 10px; border-left: 4px solid {color};">
+                                    <div style="font-size: 24px;">{icon}</div>
+                                    <div style="font-size: 12px; color: {color}; font-weight: bold;">{label}</div>
+                                    <div style="font-size: 20px; font-weight: bold;">{count}</div>
+                                </div>
+                            """, unsafe_allow_html=True)
+                
+                # Scatter plot visualization
+                st.markdown("#### 📈 Cluster Visualization")
+                
+                fig_cluster = px.scatter(
+                    df_clusters, 
+                    x='Smart_Flow_Miliar', 
+                    y='Volatility', 
+                    color='Cluster_Label',
+                    size='Flow_Ratio',
+                    hover_data=['Code', 'Sector', 'Smart_Flow_Miliar', 'Flow_Ratio'],
+                    title="Smart Money Clusters: Flow vs Volatility",
+                    color_discrete_map={
+                        '🚀 Strong Accumulation': '#0D9D58',
+                        '⚔️ Big Fight': '#FF9800',
+                        '🕵️ Stealth Accumulation': '#0066CC',
+                        '⚠️ Big Distribution': '#FF3B30',
+                        '📊 Sideways/Retail': '#A3AED0'
+                    }
+                )
+                
+                # Add reference lines
+                fig_cluster.add_hline(y=df_clusters['Volatility'].mean(), line_dash="dash", line_color="gray",
+                                    annotation_text="Avg Volatility", annotation_position="bottom right")
+                fig_cluster.add_vline(x=0, line_dash="dash", line_color="gray")
+                
+                fig_cluster.update_layout(
+                    height=500,
+                    xaxis_title="Smart Money Flow (Miliar Rp)",
+                    yaxis_title="Volatility (Std Dev / Mean)",
+                    hovermode='closest'
+                )
+                
+                fig_cluster = update_plotly_layout(fig_cluster)
+                st.plotly_chart(fig_cluster, use_container_width=True)
+                
+                # Cluster details table
+                st.markdown("#### 📋 Cluster Details")
+                
+                # Allow user to filter by cluster
+                selected_clusters = st.multiselect(
+                    "Filter Clusters:",
+                    options=df_clusters['Cluster_Label'].unique(),
+                    default=df_clusters['Cluster_Label'].unique()[:2]
+                )
+                
+                if selected_clusters:
+                    filtered_clusters = df_clusters[df_clusters['Cluster_Label'].isin(selected_clusters)]
+                    
+                    # Format for display
+                    cluster_display = filtered_clusters[['Code', 'Sector', 'Cluster_Label', 
+                                                        'Smart_Flow_Miliar', 'Flow_Ratio', 'Volatility']].copy()
+                    
+                    cluster_display['Smart_Flow_Miliar'] = cluster_display['Smart_Flow_Miliar'].apply(lambda x: f"{x:,.1f}")
+                    cluster_display['Flow_Ratio'] = cluster_display['Flow_Ratio'].apply(lambda x: f"{x:.2f}")
+                    cluster_display['Volatility'] = cluster_display['Volatility'].apply(lambda x: f"{x:.3f}")
+                    
+                    cluster_display = cluster_display.rename(columns={
+                        'Code': 'Kode',
+                        'Sector': 'Sektor',
+                        'Cluster_Label': 'Cluster',
+                        'Smart_Flow_Miliar': 'Flow (Miliar Rp)',
+                        'Flow_Ratio': 'Flow Ratio',
+                        'Volatility': 'Volatilitas'
+                    })
+                    
+                    st.dataframe(cluster_display, use_container_width=True, hide_index=True)
+                    
+                    # Download cluster data
+                    csv_clusters = df_clusters.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="📥 Download Cluster Data",
+                        data=csv_clusters,
+                        file_name=f"smart_money_clusters_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+                else:
+                    st.info("Pilih cluster untuk melihat detail")
+                    
+            else:
+                st.info("📭 Tidak ada data yang cukup untuk clustering analysis")
+                st.caption("Data mungkin terlalu sedikit atau tidak memiliki variasi yang cukup")
+                
+        except Exception as e:
+            st.error(f"❌ Error in clustering analysis: {str(e)}")
+            st.info("⚠️ Clustering tidak tersedia saat ini. Coba dengan parameter berbeda.")
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # 3. Institutional Footprint Tracker
+        st.markdown('<div class="css-card"><div class="card-title">🗺️ Institutional Footprint Tracker</div>', unsafe_allow_html=True)
+        
+        footprint_window = st.slider("Tracking Window (Hari)", 30, 180, 90, 30,
+                                   help="Periode waktu untuk melacak perubahan footprint institusi")
+        
+        try:
+            with st.spinner("🗺️ Tracking institutional footprint..."):
+                df_footprint = track_institutional_footprint(df, window_days=footprint_window)
+            
+            if not df_footprint.empty:
+                # Display top movers
+                st.markdown(f"#### 🏆 Top {min(10, len(df_footprint))} Institutional Movers ({footprint_window} hari)")
+                
+                # Format for display
+                df_footprint_display = df_footprint.head(10).copy()
+                
+                if 'Price' in df_footprint_display.columns:
+                    df_footprint_display['Price_Formatted'] = df_footprint_display['Price'].apply(
+                        lambda x: f"Rp {x:,.0f}" if pd.notna(x) else "N/A"
+                    )
+                
+                if 'Total_Inst_Flow' in df_footprint_display.columns:
+                    df_footprint_display['Total_Inst_Flow_Formatted'] = df_footprint_display['Total_Inst_Flow'].apply(
+                        lambda x: format_id_short(x, True) if pd.notna(x) else "N/A"
+                    )
+                
+                if 'Flow_Percentage' in df_footprint_display.columns:
+                    df_footprint_display['Flow_Percentage'] = df_footprint_display['Flow_Percentage'].apply(
+                        lambda x: f"{x:.4f}%" if pd.notna(x) else "N/A"
+                    )
+                
+                if 'Footprint_Score' in df_footprint_display.columns:
+                    df_footprint_display['Footprint_Score'] = df_footprint_display['Footprint_Score'].apply(
+                        lambda x: f"{x:.1f}" if pd.notna(x) else "N/A"
+                    )
+                
+                # Select columns for display
+                footprint_cols = ['Code', 'Sector', 'Price_Formatted', 'Total_Inst_Flow_Formatted', 
+                                'Flow_Percentage', 'Footprint_Score']
+                available_footprint_cols = [col for col in footprint_cols if col in df_footprint_display.columns]
+                
+                if available_footprint_cols:
+                    df_footprint_display = df_footprint_display[available_footprint_cols]
+                    
+                    # Rename columns
+                    rename_footprint = {
+                        'Code': 'Kode',
+                        'Sector': 'Sektor',
+                        'Price_Formatted': 'Harga',
+                        'Total_Inst_Flow_Formatted': 'Flow Institusi',
+                        'Flow_Percentage': '% Flow',
+                        'Footprint_Score': 'Footprint Score'
+                    }
+                    
+                    df_footprint_display = df_footprint_display.rename(columns=rename_footprint)
+                    
+                    # Style the dataframe
+                    def color_footprint_score(val):
+                        try:
+                            score = float(val)
+                            if score >= 80:
+                                return 'background-color: #D6F5E3; color: #0D9D58; font-weight: bold;'
+                            elif score >= 60:
+                                return 'background-color: #FFF4E5; color: #FF9800; font-weight: bold;'
+                            elif score >= 40:
+                                return 'background-color: #FFE5E5; color: #FF3B30; font-weight: bold;'
+                        except:
+                            pass
+                        return ''
+                    
+                    styled_footprint = df_footprint_display.style
+                    
+                    if 'Footprint Score' in df_footprint_display.columns:
+                        styled_footprint = styled_footprint.applymap(color_footprint_score, subset=['Footprint Score'])
+                    
+                    st.dataframe(styled_footprint, use_container_width=True, hide_index=True)
+                else:
+                    st.warning("Tidak ada kolom footprint yang tersedia")
+                    
+            else:
+                st.info("📭 Tidak ada data footprint institusi yang signifikan")
+                st.caption("Coba dengan window waktu yang lebih panjang")
+                
+        except Exception as e:
+            st.error(f"❌ Error tracking institutional footprint: {str(e)}")
+            st.info("⚠️ Fitur footprint tracker tidak tersedia saat ini")
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+        
     else:
-        st.warning("Data tidak tersedia untuk institutional intelligence")
+        st.warning("📭 Data tidak tersedia untuk institutional intelligence analysis")
 
 st.markdown("---")
 st.markdown("<div style='text-align: center; color: #A3AED0;'>KSEI Bandarmology PRO | Institutional Intelligence Platform | Updated for new column format</div>", unsafe_allow_html=True)
