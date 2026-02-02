@@ -387,34 +387,116 @@ def get_available_columns(data, expected_cols):
         return [col for col in expected_cols if hasattr(data, col)]
 
 # ==============================================================================
-# 📊 6) EXISTING HELPER FUNCTIONS (DIPERBARUI)
+# 📊 6) EXISTING HELPER FUNCTIONS (REVISI LAGI)
 # ==============================================================================
 
 @st.cache_data
-def get_stock_ownership_state(df, stock_code):
-    """Ambil data kepemilikan terbaru untuk satu saham - FIXED"""
-    df_stock = df[df['Code'] == stock_code]
-    if df_stock.empty: 
-        return pd.DataFrame(), pd.Series(dtype='object')
+def calculate_macro_flow(df_filtered):
+    """Hitung flow makro - PERBAIKAN UTAMA DI SINI"""
+    # 1. Validasi input
+    if df_filtered.empty:
+        # Return empty dataframes dengan struktur yang benar
+        net_flow = pd.DataFrame(columns=['Kategori', 'Total Net Flow (Rp)'])
+        cum_flow = pd.DataFrame(columns=['Date', 'Kategori', 'Cumulative Flow (Rp)'])
+        return net_flow, cum_flow
     
-    latest = df_stock.sort_values('Date').iloc[-1]
+    # 2. Hitung net flow per kategori (gunakan kolom value/_Chg_Val)
+    available_val_cols = []
     
-    # 🔥 PERBAIKAN: get_available_columns bisa handle Series (latest)
-    available_ownership_cols = get_available_columns(latest, OWNERSHIP_COLS)
+    # Coba format baru dulu (_Chg_Val)
+    for col in OWNERSHIP_CHG_VAL_COLS:
+        if col in df_filtered.columns:
+            available_val_cols.append(col)
     
-    if not available_ownership_cols:
-        return pd.DataFrame(), latest
+    # Jika tidak ada kolom baru, coba kolom lama untuk backward compatibility
+    if not available_val_cols:
+        # Coba format lama (_chg_Rp)
+        old_format_cols = [f"{col}_chg_Rp" for col in OWNERSHIP_COLS]
+        for col in old_format_cols:
+            if col in df_filtered.columns:
+                available_val_cols.append(col)
     
-    # Ambil data hanya untuk kolom yang tersedia
-    ownership_data = latest[available_ownership_cols]
+    if not available_val_cols:
+        # Jika masih tidak ada, coba kolom apa saja yang mengandung '_Chg' atau 'chg'
+        possible_cols = [col for col in df_filtered.columns if '_Chg' in col or 'chg' in col.lower()]
+        available_val_cols = possible_cols
     
-    # Buat DataFrame untuk state
-    df_state = pd.DataFrame({
-        'Kategori': available_ownership_cols,
-        'Jumlah Saham': ownership_data.values
-    })
+    if available_val_cols:
+        try:
+            # Hitung sum untuk setiap kolom
+            net_flow_series = df_filtered[available_val_cols].sum()
+            
+            # Convert ke DataFrame
+            net_flow = pd.DataFrame({
+                'Kategori': net_flow_series.index,
+                'Total Net Flow (Rp)': net_flow_series.values
+            })
+            
+            # Clean up kategori names
+            net_flow['Kategori'] = net_flow['Kategori'].str.replace('_Chg_Val', '')
+            net_flow['Kategori'] = net_flow['Kategori'].str.replace('_chg_Rp', '')
+            net_flow['Kategori'] = net_flow['Kategori'].str.replace('_chg', '')
+            
+            net_flow = net_flow.sort_values('Total Net Flow (Rp)', ascending=False).reset_index(drop=True)
+        except Exception as e:
+            print(f"Error calculating net flow: {e}")
+            net_flow = pd.DataFrame(columns=['Kategori', 'Total Net Flow (Rp)'])
+    else:
+        net_flow = pd.DataFrame(columns=['Kategori', 'Total Net Flow (Rp)'])
     
-    return df_state, latest
+    # 3. Hitung cumulative flow (local vs foreign)
+    try:
+        # Cek kolom derived
+        local_col = 'Total_Local_chg_Rp' if 'Total_Local_chg_Rp' in df_filtered.columns else None
+        foreign_col = 'Total_Foreign_chg_Rp' if 'Total_Foreign_chg_Rp' in df_filtered.columns else None
+        
+        if local_col and foreign_col:
+            # Hitung cumulative sum
+            cum_data = df_filtered.groupby('Date')[[local_col, foreign_col]].sum().cumsum().reset_index()
+            
+            # Melt untuk plotting
+            cum_flow = pd.melt(
+                cum_data, 
+                id_vars=['Date'],
+                value_vars=[local_col, foreign_col],
+                var_name='Kategori',
+                value_name='Cumulative Flow (Rp)'
+            )
+            
+            # Clean up kategori names
+            cum_flow['Kategori'] = cum_flow['Kategori'].str.replace('_chg_Rp', ' (Net Rp)')
+            cum_flow['Kategori'] = cum_flow['Kategori'].str.replace('Total_', '')
+        else:
+            # Coba hitung manual dari kolom individual
+            local_val_cols = [col for col in available_val_cols if 'Local' in col]
+            foreign_val_cols = [col for col in available_val_cols if 'Foreign' in col]
+            
+            if local_val_cols and foreign_val_cols:
+                # Calculate daily totals
+                df_filtered['Local_Daily'] = df_filtered[local_val_cols].sum(axis=1)
+                df_filtered['Foreign_Daily'] = df_filtered[foreign_val_cols].sum(axis=1)
+                
+                # Group by date and calculate cumulative
+                daily_totals = df_filtered.groupby('Date')[['Local_Daily', 'Foreign_Daily']].sum()
+                cum_totals = daily_totals.cumsum().reset_index()
+                
+                cum_flow = pd.melt(
+                    cum_totals,
+                    id_vars=['Date'],
+                    value_vars=['Local_Daily', 'Foreign_Daily'],
+                    var_name='Kategori',
+                    value_name='Cumulative Flow (Rp)'
+                )
+                
+                cum_flow['Kategori'] = cum_flow['Kategori'].str.replace('_Daily', ' (Net Rp)')
+            else:
+                cum_flow = pd.DataFrame(columns=['Date', 'Kategori', 'Cumulative Flow (Rp)'])
+                
+    except Exception as e:
+        print(f"Error calculating cumulative flow: {e}")
+        cum_flow = pd.DataFrame(columns=['Date', 'Kategori', 'Cumulative Flow (Rp)'])
+    
+    return net_flow, cum_flow
 
 @st.cache_data
 def calculate_sector_rotation(df_filtered, selected_category):
